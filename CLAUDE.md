@@ -1,0 +1,48 @@
+# صفّاف — Arabic research typesetting skill
+
+A public Claude skill that typesets Arabic research papers and articles in Lotus Lotfi and outputs Word (.docx) + PDF.
+The skill lives in `skill/saffaf/` (SKILL.md + scripts + fonts). Everything else here is development support.
+
+## Non-negotiable rules
+- **Never change a letter of the author's text.** Only invisible typesetting aids (RLM, no-break space, word joiner). Any change that adds, removes or alters a visible character or space is a bug — `tests/run_tests.py` checks this.
+  - One bounded exception — Quran verses in Uthmani script (Hafs): only when the user explicitly asks for it (`--uthmani`), and only for text the author marked as a verse: between ﴿ ﴾, or between quotation marks («» "" ()) right after a phrase that says so (قال تعالى، قوله تعالى، قال الله، وقال سبحانه). The author's other words are never searched. The verse is recognised by its letters alone — the author's vowel marks are ignored — and the same words (a whole ayah or the part written, never more) are then set from the Uthmani text with the Mushaf's own marks. A wording found in several places is converted when its Uthmani text is the same in all of them, or when its reference or surah name settles the place. A verse whose letters match no place, or whose reference points to another place than the one its letters match, stays exactly as written and is mentioned in the reply (with both places), never in the file.
+- Never "fix" the author's «..» (two dots) or spelling; language remarks go in the chat reply, never in the file.
+- Never invent metadata (author, date, sources).
+- Scope: research papers and articles only. Do not add or advertise books.
+- Input: text only (pasted text, DOCX, DOC, ODT, RTF, HTML, EPUB, TXT, MD). PDF and images are refused; text copied from a PDF is detected (`DAMAGED`) and refused.
+- The skill is public: no personal names, paths or environment-specific details in skill files.
+- Lotus Lotfi is free and published by its author for use and redistribution; bundling it is fine.
+- The fonts are used exactly as their owners published them. Never modify a font file in any way — not the bundled files, and not a temporary copy made at run time.
+
+## Layout
+- `skill/saffaf/` — the shipped skill. `scripts/to_md.py` (any format → in.md draft), `scripts/make.py` (in.md → DOCX + PDF, auto TOC), `scripts/typeset.py` (DOCX builder), `scripts/quran.py` (recognising a verse by its letters, for Uthmani script). `assets/quran/` — the Quran font (unmodified) and `quran.txt.xz`, the compact Quran text (see its `SOURCE.md`). `assets/symbols/` — Noto Naskh Arabic (SIL OFL, unmodified) for the honorific signs Lotus lacks (U+FD00–U+FDFF), with its licence and `SOURCE.md`. After the PDF, `make.py` checks the font of every character and prints a `FONTS` line for any drawn in a font outside the skill's own.
+- `tests/` — `run_tests.py` is the regression suite; `lo_versions.sh` runs it on other LibreOffice versions in containers (podman or docker) — run it whenever the PDF route changes, because the engine differs from one version to the next and the skill must not depend on the version installed here; `stretch_check.py` measures the words of a PDF to catch stretched letters; `inputs/` typesetting fixtures; `formats/` conversion fixtures. `quran-source/` holds the two Quran texts as obtained; `build_quran_data.py` builds the skill's compact file from them and the suite compares the two ayah by ayah — never edit the text by hand.
+- `docs/saffaf.png` — the image at the top of `README.md` (1200×630, the same image the download page shares).
+- `FEEDBACK.md` — notes for the next versions. `CHANGELOG.md` — what each version changed.
+- `README.md` — the public page, in Arabic, for non-technical visitors. `LICENSE` — MIT for the code only (not the font). `.github/ISSUE_TEMPLATE/` — the two Arabic issue templates (remark, bug).
+
+## Feedback-collection mode — ended 2026/10/14: the owner said «نبدأ التطوير», development is in progress
+While development is in progress, the owner's items are recorded in `FEEDBACK.md` and carried out as the owner directs. The rules below apply again when the owner returns to feedback collection.
+- Every remark, suggestion or bug the owner mentions about صفّاف: record it in `FEEDBACK.md` under «مفتوحة» with the next serial number, the date as yyyy/mm/dd, and the remark's text exactly as stated.
+- Recording only. Do not change the skill, the tests or any other file because of a remark.
+- After each record: commit with the message «ملاحظة رقم N», then push.
+- If a remark conflicts with a rule in this file (e.g. «لا يتغيّر حرف») or with an earlier remark, record it as is and add one line under it stating the conflict.
+- Development (the Workflow below) starts only when the owner says explicitly: «نبدأ التطوير».
+
+## Workflow
+1. Pick items from `FEEDBACK.md`.
+2. Change the skill; add a test for every bug fixed or feature added.
+3. `./build.sh` — runs the tests, then packages `dist/saffaf.zip`, `dist/saffaf.skill` and `dist/saffaf-x.y.z.zip` (the version is the first heading of `CHANGELOG.md`). A release carries all three: the download link points at `saffaf.zip`, the download page at the file with the version in its name.
+4. Visually check a rendered PDF page before release (`pdftoppm -r 80 -png`).
+5. Add the new version to `CHANGELOG.md`, commit.
+
+## Known limits
+- claude.ai runs LibreOffice 24.2.7.2 (checked by the owner). The `ubuntu:24.04` container of `tests/lo_versions.sh` has the same version, so a result there is the result users get on claude.ai; check every PDF-route change there, not only on the version installed here.
+- Kashida in the PDF: the style justifies by the spaces between words (the Word file asks for exactly that), but LibreOffice before 25 fills a justified Arabic line by stretching letters: it inserts the font's own kashida glyph, with no character behind it, so only measuring the words finds it (`tests/stretch_check.py`). Accepted as a known limit (owner's decision); the reply never mentions it. LibreOffice 25 and later fills the line with spaces. What was tried: a run-time copy of the font whose kashida is zero wide stops it on every version, but it modifies the font, which is not allowed; setting each Arabic word as a field in the intermediate file stops it on 24.2 but makes LibreOffice hang on some documents and splits short references; no paragraph, document or program setting controls it in those versions (their source was read: 7.3 and 24.2). Long-term fix: a different PDF engine. Verses in Uthmani script are no exception to worry about: the Mushaf itself is justified with kashida.
+- LibreOffice (the PDF engine) splits a parenthesis from an adjacent number in RTL text and ignores invisible joiners; Word keeps them together. Long-term fix: a different PDF engine.
+- LibreOffice leaves a heading alone at the foot of a page when the paragraph after it carries a footnote that no longer fits (Word does not). `make.py` detects this in the PDF and rebuilds with a page break before that heading; the Word file is not touched.
+- LibreOffice numbers a footnote by the page where it first lays it out and keeps that number when the line then moves to the next page because its note no longer fits there, so the note shows (2) or (3) on a page of its own (7.3 and 24.2; every layout pass does it again, so no setting, reload or macro helps). `make.py` reads where each reference fell from the PDF's note links and, when a page's numbers are not 1, 2, 3…, writes every number in by hand in the intermediate file (the note's own label becomes a word joiner; the lines are set as before) and exports again. The Word file is not touched.
+- Uthmani script is opt-in (Hafs only) and looks only at what the author marked as a verse; a wording whose places differ in their Uthmani text (often just a pause mark) needs its reference or surah name.
+- Word has no Arabic-Indic number format (`hindiNumbers` is Devanagari) and does not store digit shapes in the file. The page number is therefore spelled out by nested IF fields (always ١٢٣); footnote numbers stay decimal and follow the reader's «Numeral» setting.
+- The Word file does not embed Lotus Lotfi (fsType 4, «preview & print»: Word opens such a file read-only where the font is missing, and Word for Mac ignores embedded fonts). `make.py` puts the fonts the Word file needs in one zip beside the output, «خطوط-لملف-Word.zip»: the two Lotus files always, the Quran font whenever a verse was set in Uthmani script, and Noto Naskh Arabic with its licence whenever a sign was set in it.
+- Word-side behaviour was checked on Word for Mac only (not Windows). To check a change there, script Word to open the .docx, save it as PDF and close it (AppleScript), then inspect that PDF; note that this export swaps non-embedded fonts for others unless the document's «embed fonts» flag is set.
