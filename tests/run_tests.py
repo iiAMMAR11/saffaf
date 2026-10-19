@@ -772,8 +772,7 @@ open(os.path.join(thd, 'in.md'), 'w', encoding='utf-8').write(open(os.path.join(
 rth = run(os.path.join(SK, 'make.py'), os.path.join(thd, 'in.md'), th, '--profile=kku', '--basmala=2', '--uthmani')
 ok('thesis: built, every heading found, no stray font', rth.returncode == 0 and os.path.exists(th + '.pdf') and 'page not found' not in rth.stdout and 'FONTS' not in rth.stdout, rth.stdout[-300:] + rth.stderr[-300:])
 thn = [l_ for l_ in rth.stdout.splitlines() if l_.startswith('THESIS:')]
-ok('thesis: what the guide needs and the text lacks is told in Arabic; a logo and a basmala given are not asked for again',
-   any('PT Bold Heading' in l_ for l_ in thn) and not any('شعار' in l_ or 'البسملة' in l_ for l_ in thn), str(thn))
+ok('thesis: a logo, a basmala and the title font all at hand: nothing to ask for', thn == [], str(thn))
 TD = zipfile.ZipFile(th + '.docx'); tdoc = TD.read('word/document.xml').decode(); tsty = TD.read('word/styles.xml').decode()
 secs = re.findall(r'<w:sectPr>.*?</w:sectPr>', tdoc)
 ok('thesis: the front pages unnumbered, the prelims in letters from «ب», the text from 1, a part\'s page with no header or number',
@@ -801,6 +800,15 @@ ok('thesis PDF: a part\'s page carries no header and no number; an appendix has 
    part1 > intro and not tp[part1][0].strip() and not tp[part1][1] and 0 < app1 < vix)
 tocl = [l_ for x in tp[toc_p:intro] for l_ in x[2].split('\n') if '....' in l_]
 def toc_num(t): return next((l_.split('.')[0].strip() for l_ in tocl if lkey(l_.split('.')[-1]) == lkey(t) and (t.isascii() == l_.split('.')[-1].isascii())), None)
+with pdfplumber.open(th + '.pdf') as d: tfonts = {(c_['fontname'].split('+')[-1], round(c_['size'])) for c_ in d.pages[0].chars if c_['top'] > 300 and c_['top'] < 400}
+ttl_runs = re.findall(r'<w:r><w:rPr><w:rFonts w:ascii="PT Bold Heading"[^>]*/>(.*?)</w:rPr>', tdoc)
+ok('thesis: the title in the guide\'s font, PT Bold Heading 20, on the title and approval pages, with no added bold; the font goes into the fonts zip',
+   tfonts == {('PTBoldHeading', 20)} and len(ttl_runs) >= 2 and not any('<w:b/>' in x for x in ttl_runs) and 'PT_Bold_Heading.ttf' in zipfile.ZipFile(os.path.join(OUT, mk.FONTS_ZIP)).namelist(), f'{tfonts} {len(ttl_runs)}')
+e_ = os.path.join(OUT, 'no_kku_font'); os.makedirs(e_, exist_ok=True)
+rnf = subprocess.run([sys.executable, os.path.join(SK, 'typeset.py'), os.path.join(thd, 'in.md'), os.path.join(OUT, 'thesis_nofont.docx'), 'word', '--profile=kku', '--font=traditional', '--basmala=2'],
+                     capture_output=True, text=True, env={**os.environ, 'SAFFAF_KKU_DIR': e_})
+ok('thesis: without the title font the title is Traditional Arabic bold, and the reply says so', rnf.returncode == 0 and 'PT Bold Heading' in rnf.stdout
+   and 'PT Bold Heading' not in zipfile.ZipFile(os.path.join(OUT, 'thesis_nofont.docx')).read('word/document.xml').decode(), rnf.stdout[-300:] + rnf.stderr[-300:])
 ok('thesis PDF: the contents give the prelims their letters (as their footers) and the text its numbers',
    toc_num('الشكر والتقدير') == 'ج' and toc_num('Abstract') in ('ه', 'ـه') and (toc_num('المقدمة') or '').translate(D2) == '1'
    and toc_num('قائمة المحتويات') == tp[toc_p][1], str(tocl[:5]))

@@ -35,6 +35,7 @@ def setup():
                 '<?xml version="1.0"?><!DOCTYPE fontconfig SYSTEM "fonts.dtd"><fontconfig><match target="scan">'
                 f'<test name="family"><string>{TRAD[0]}</string></test><test name="style"><string>Bold</string></test>'
                 '<edit name="weight" mode="assign"><const>bold</const></edit></match></fontconfig>')
+    if TITLE: shutil.copy(TITLE[1], fd)   # a thesis title in the guide's font
     shutil.copy(os.path.join(HERE, '..', 'assets', 'symbols', 'NotoNaskhArabic-Regular.ttf'), fd)
     if UTHMANI: shutil.copy(os.path.join(HERE, '..', 'assets', 'quran', 'UthmanicHafs_V22.ttf'), fd)
     if shutil.which('fc-cache'): subprocess.run(['fc-cache', '-f'], capture_output=True)
@@ -320,6 +321,7 @@ def fonts_zip(docx):
         files = [(f, os.path.basename(f)) for f in TRAD[1:] if f]
         if 'w:cs="_Lotus Lotfi"' in z.read('word/document.xml').decode(): files += lotus
     else: files = lotus
+    if TITLE and f'w:cs="{TITLE[0]}"' in z.read('word/document.xml').decode(): files.append((TITLE[1], os.path.basename(TITLE[1])))
     if 'word/fonts/font1.odttf' in z.namelist(): files.append((os.path.join(adir, 'quran', 'UthmanicHafs_V22.ttf'), 'UthmanicHafs_V22.ttf'))
     if any('w:cs="Noto Naskh Arabic"' in z.read(n).decode() for n in ('word/document.xml', 'word/footnotes.xml')):
         files += [(os.path.join(adir, 'symbols', 'NotoNaskhArabic-Regular.ttf'), 'NotoNaskhArabic-Regular.ttf'), (os.path.join(adir, 'symbols', 'OFL.txt'), 'NotoNaskhArabic-OFL.txt')]
@@ -360,6 +362,7 @@ def stray_fonts(pdf):
     if TRAD:   # the body font asked for: its own files (bold too) decide what it has
         for f in TRAD[1:]:
             if f: k = TTFont(f, lazy=True)['name'].getDebugName(6); OWN.insert(0, k); has[k] = set(TTFont(f).getBestCmap())
+    if TITLE: k = TTFont(TITLE[1], lazy=True)['name'].getDebugName(6); OWN.insert(0, k); has[k] = set(TTFont(TITLE[1]).getBestCmap())
     files = None; other = {}
     def cmap(font):   # Times / Courier, as installed: None when the file cannot be found (then nothing is reported)
         nonlocal files
@@ -381,6 +384,7 @@ def stray_fonts(pdf):
     return {ch: pages for ch, pages in out.items() if pages}
 
 TRAD = None
+TITLE = None   # the thesis-title font (PT Bold Heading), in the thesis profile when its file is there
 if __name__ == '__main__':
     flags = [a for a in sys.argv[1:] if a.startswith('--')]
     UTHMANI = ['--uthmani'] if '--uthmani' in flags else []
@@ -392,6 +396,9 @@ if __name__ == '__main__':
         from fonts import traditional_files
         TRAD = traditional_files()
         if not TRAD: sys.exit('Traditional Arabic was asked for, but its font files are not in assets/traditional')
+    if opt('profile') == 'kku':
+        from fonts import title_font
+        TITLE = title_font()
     os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
     setup()
     w = tempfile.mkdtemp(); ts = os.path.join(HERE, 'typeset.py')

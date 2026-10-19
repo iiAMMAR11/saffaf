@@ -1,6 +1,6 @@
 import re, os, zipfile, uuid, unicodedata
 import quran, indexes, cite
-from fonts import traditional_files
+from fonts import traditional_files, title_font
 from xml.sax.saxutils import escape
 
 LOTUS = "_Lotus Lotfi"
@@ -365,13 +365,18 @@ REFS = re.compile(r'المراجع|المصادر|References|Bibliography')
 CAPTION = re.compile(r'^(?:>>\s*)?(?:\*\*)?\s*(جدول|الجدول|شكل|الشكل)\s*(?:رقم)?\s*\(?\s*[٠-٩0-9]+(?:\s*[-–.]\s*[٠-٩0-9]+)?\s*\)?\s*[:：\-–]')
 EMU = 360000   # per cm
 
-def frame_lines(lines, ycm, size, width=None, xalign='center', bold=True):
+def frame_lines(lines, ycm, size, width=None, xalign='center', bold=True, font=None):
     """Lines set at a fixed place on the page (cm from the top edge), as the guide's models measure them; a block that
     wraps to more lines does not move the next one."""
     w = width or TEXTW
     fp = f'<w:framePr w:w="{w}" w:hSpace="0" w:wrap="notBeside" w:vAnchor="page" w:hAnchor="margin" w:xAlign="{xalign}" w:y="{int(ycm * 567)}"/>'
     sp = f'<w:spacing w:before="0" w:after="0" w:line="{size * 15}" w:lineRule="exact"/>'
-    return ''.join(f'<w:p><w:pPr>{fp}<w:bidi/>{sp}<w:jc w:val="center"/></w:pPr>{runs(inline(t, {}), bold, size)}</w:p>' for t in lines)
+    def r(t):
+        if not font: return runs(inline(t, {}), bold, size)
+        # a font of its own (the thesis title): no added bold, since its one face is drawn bold; Latin keeps Times
+        f = f'<w:rFonts w:ascii="{font}" w:hAnsi="{font}" w:eastAsia="{font}" w:cs="{font}"/>'
+        return re.sub(r'<w:rPr>(?!<w:rFonts)', '<w:rPr>' + f, runs(inline(t, {}), False, size))
+    return ''.join(f'<w:p><w:pPr>{fp}<w:bidi/>{sp}<w:jc w:val="center"/></w:pPr>{r(t)}</w:p>' for t in lines)
 
 def logo_run(ycm):
     """The university's logo, 4 × 4 cm at most, at the left of the text area, ycm from the top (the user's own image)."""
@@ -416,13 +421,14 @@ def thesis_front(body):
                               ('author', 'اسم الطالب'), ('supervisor', 'اسم المشرف ولقبه'), ('date', 'تاريخ المناقشة')) if not m.get(k)]
     if missing: THESIS_NOTES.append('THESIS: لم يصلني من بيانات صفحة العنوان: ' + '، '.join(missing))
     if not LOGO: THESIS_NOTES.append('THESIS: لم يصلني شعار الجامعة، فتُرك مكانه في صفحة العنوان وصفحة الإجازة فارغًا')
-    THESIS_NOTES.append('THESIS: عنوان الرسالة بخط Traditional Arabic عريض ٢٠، لأن خط PT Bold Heading الذي يسمّيه الدليل ليس في المهارة')
+    tf = title_font(); tf = tf[0] if tf else None   # the guide's title font, when its file is in the skill
+    if not tf: THESIS_NOTES.append('THESIS: عنوان الرسالة بخط Traditional Arabic عريض ٢٠، لأن خط PT Bold Heading الذي يسمّيه الدليل ليس في المهارة')
     head = ['المملكة العربية السعودية', 'وزارة التعليم', 'جامعة الملك خالد'] + [x for x in (fixed('college', 'كلية'), fixed('department', 'قسم')) if x]
     statement = (f'قُدمت هذه الرسالة استكمالاً لمتطلبات الحصول على درجة {m["degree"]}' + (f' في {m["field"]}' if m.get('field') else '')) if m.get('degree') else ''
     out.append(frame_lines(head, 3, 32, width=TEXTW // 2, xalign='right'))
     # the logo hangs on an ordinary paragraph of the page (LibreOffice drops a picture anchored in a placed paragraph)
     out.append(f'<w:p><w:pPr><w:bidi/><w:spacing w:before="0" w:after="0"/></w:pPr>{logo_run(3)}</w:p>' if LOGO else '')
-    out.append(frame_lines([m['title']] if m.get('title') else [], 11, 40))
+    out.append(frame_lines([m['title']] if m.get('title') else [], 11, 40, font=tf))
     out.append(frame_lines([statement] if statement else [], 15, 32))
     out.append(frame_lines([m['author']] if m.get('author') else [], 18, 40))
     out.append(frame_lines([m['supervisor']] if m.get('supervisor') else [], 21, 40))
@@ -433,7 +439,7 @@ def thesis_front(body):
                                                        f'التخصص: {m["field"]}' if m.get('field') else '', f'الدرجة العلمية: {m["degree"]}' if m.get('degree') else '') if x]
         out.append(frame_lines(head2, 2, 32, width=TEXTW // 2, xalign='right'))
         out.append(f'<w:p><w:pPr><w:bidi/><w:spacing w:before="0" w:after="0"/></w:pPr>{logo_run(2)}</w:p>' if LOGO else '')
-        out.append(frame_lines([m['title']] if m.get('title') else [], 10, 40))
+        out.append(frame_lines([m['title']] if m.get('title') else [], 10, 40, font=tf))
         out.append(frame_lines([m['author']] if m.get('author') else [], 15, 32))
         out.append(frame_lines(['إجازة أعضاء لجنة المناقشة والحكم للرسالة بعد إجراء التعديلات المطلوبة (إن وُجدت)',
                                 'التاريخ:      /      /      ١٤هـ   –      /      /      ٢٠م'], 17, 32))
