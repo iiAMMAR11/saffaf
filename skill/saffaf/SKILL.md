@@ -13,6 +13,8 @@ Font: Lotus Lotfi (لوتس لطفي) by Lotfi El-Tokhi, published free by its a
 
 Symbols font: Noto Naskh Arabic (SIL Open Font License; `assets/symbols`, details in its `SOURCE.md`). It sets, character by character, only the honorific signs and ligature words Lotus lacks at their standard code points — ﷻ ﷽ ﵁ and the rest of U+FD40–U+FD4F; the author's characters stay as written.
 
+Latin font: Times New Roman, Microsoft's own files from its free «TrueType core fonts for the Web» package, unmodified, with their licence (`assets/times`, details in its `SOURCE.md`), for every Latin word, English footnote and Latin reference, in the PDF as in Word.
+
 خط الآيات: خط الرسم العثماني – حفص (KFGQPC HAFS Uthmanic Script)، من إصدار مجمع الملك فهد لطباعة المصحف الشريف بالمدينة المنورة، يُستخدم ويوزَّع مجانًا وفق رخصته دون تعديل. ونصّا المصحف من مكتبة QUL. (`assets/quran`, details in its `SOURCE.md` — never edit these files.)
 
 ## Iron rules

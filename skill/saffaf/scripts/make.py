@@ -35,6 +35,9 @@ def setup():
                 '<?xml version="1.0"?><!DOCTYPE fontconfig SYSTEM "fonts.dtd"><fontconfig><match target="scan">'
                 f'<test name="family"><string>{TRAD[0]}</string></test><test name="style"><string>Bold</string></test>'
                 '<edit name="weight" mode="assign"><const>bold</const></edit></match></fontconfig>')
+    td = os.path.join(HERE, '..', 'assets', 'times')   # Times New Roman itself, for Latin text (not a look-alike)
+    for f in os.listdir(td):
+        if f.lower().endswith('.ttf'): shutil.copy(os.path.join(td, f), fd)
     if TITLE: shutil.copy(TITLE[1], fd)   # a thesis title in the guide's font
     shutil.copy(os.path.join(HERE, '..', 'assets', 'symbols', 'NotoNaskhArabic-Regular.ttf'), fd)
     if UTHMANI: shutil.copy(os.path.join(HERE, '..', 'assets', 'quran', 'UthmanicHafs_V22.ttf'), fd)

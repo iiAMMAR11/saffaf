@@ -824,6 +824,18 @@ ok('SKILL.md: the thesis profile and IEEE are documented; the description fits t
    all(x in skill_md for x in ('--profile=kku', '@approval', '@appendix', '@figures', 'THESIS', 'PT Bold Heading', 'IEEE'))
    and len(re.search(r'^description: (.*)$', skill_md, re.M).group(1)) <= 1024)
 
+# 30. Latin text is drawn in Times New Roman itself (the skill's own copy), never a look-alike, and no Arabic letter in it
+with pdfplumber.open(th + '.pdf') as d:
+    lat = [(c_['fontname'].split('+')[-1], c_['text']) for pg in d.pages for c_ in pg.chars]
+ok('PDF: every Latin letter in Times New Roman, none in Liberation Serif, no Arabic letter in Times',
+   [x for x in lat if x[1].isascii() and x[1].isalpha()] and all(f_.startswith('TimesNewRoman') for f_, t_ in lat if t_.isascii() and t_.isalpha())
+   and not any('Liberation' in f_ for f_, _ in lat) and not any('Times' in f_ and re.match('[\u0600-\u06FF]', t_) for f_, t_ in lat))
+tsum = {'Times.TTF': '4e98adeff8ccc8ef4e3ece8d4547e288ff85fdc9c7ca711a4599c234874bbe86', 'Timesbd.TTF': '4357b63cef20c01661a53c5dae70ffd20cb4765503aaed6d38b17a57c5a90bff',
+        'Timesi.TTF': 'c25ae529b4cecdbca148b6ccb862ee0abad770af8b1fd29c8dba619d1b8da78a', 'Timesbi.TTF': '192e1b0d18e90334e999a99f8c32808d6a2e74b3698b8cd90c943c2249a46549'}
+ok('Times New Roman: Microsoft\'s files unmodified, under their own names, with their licence',
+   all(hashlib.sha256(open(os.path.join(SK, '..', 'assets', 'times', n), 'rb').read()).hexdigest() == h for n, h in tsum.items())
+   and os.path.exists(os.path.join(SK, '..', 'assets', 'times', 'Licen.TXT')))
+
 failed = [n for n, p, _ in results if not p]
 print(f'\n{len(results) - len(failed)}/{len(results)} passed. Outputs: {OUT}')
 sys.exit(1 if failed else 0)
