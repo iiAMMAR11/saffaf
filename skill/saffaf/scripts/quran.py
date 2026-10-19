@@ -114,30 +114,39 @@ def surah(name):
 def _where(s, a, b=None):
     return SURAHS[s - 1].replace('\u00a0', ' ') + (f': {a}' + (f'-{b}' if b not in (None, a) else '') if a else '').translate(HINDI)
 
-def convert(verse, ref=None):
+def place(verse, ref=None):
     """verse: the text the author marked as a verse; ref: (surah name, ayah numbers or None) as written, or None.
-    -> the Uthmani text, or None when the verse must stay as written. Every call adds a line to REPORT."""
+    -> ((surah, first ayah, last ayah, Uthmani text), '') when the letters settle one place, or (None, why not — in Arabic).
+    Nothing is recorded: the index of verses asks where a verse is without converting it."""
     _load()
-    def done(text, note=''): REPORT.append((text is not None, verse.strip(), note)); return text
     tokens = _tokens(verse)
-    if not tokens or tokens[0][0] != 'w': return done(None, 'ليس فيها نص آية')
+    if not tokens or tokens[0][0] != 'w': return None, 'ليس فيها نص آية'
     hits = [(s,) + m for s, p in _index.get(tokens[0][1], []) for m in [_match(tokens, s, p)] if m]   # (surah, first ayah, last ayah, text)
     def listed(hs):
         places = sorted({h[:3] for h in hs})
         return '، '.join(_where(*x) for x in places[:4]) + (' …' if len(places) > 4 else '')
     if ref:
         s = surah(ref[0]); n = [int(x) for x in re.findall(r'\d+', (ref[1] or '').translate(DIG))]
-        if not s: return done(None, f'اسم السورة في الإحالة غير معروف «{ref[0].strip()}»')
+        if not s: return None, f'اسم السورة في الإحالة غير معروف «{ref[0].strip()}»'
         lo, hi = (min(n), max(n)) if n else (1, 10 ** 4)
         there = [h for h in hits if h[0] == s and lo <= h[1] and h[2] <= hi]
         told = _where(s, lo if n else None, hi)
         if not there:
             # the letters decide the place; a reference that points elsewhere is the author's to check
-            if hits: return done(None, f'حروفها تطابق [{listed(hits)}]، والإحالة تشير إلى [{told}]؛ فتحقّق من أحدهما')
-            return done(None, f'حروفها لا تطابق نص المصحف في [{told}] ولا في غيره')
+            if hits: return None, f'حروفها تطابق [{listed(hits)}]، والإحالة تشير إلى [{told}]؛ فتحقّق من أحدهما'
+            return None, f'حروفها لا تطابق نص المصحف في [{told}] ولا في غيره'
         hits = there
-    elif not hits: return done(None, 'حروفها لا تطابق نص المصحف')
+    elif not hits: return None, 'حروفها لا تطابق نص المصحف'
     texts = {h[3] for h in hits}
     # the same wording in several places is converted as long as its Uthmani text is one and the same in all of them
-    if len(texts) > 1: return done(None, f'وردت بهذا اللفظ في مواضع يختلف رسمها [{listed(hits)}]؛ فأضف إحالتها أو اسم سورتها')
-    return done(texts.pop())
+    if len(texts) > 1: return None, f'وردت بهذا اللفظ في مواضع يختلف رسمها [{listed(hits)}]؛ فأضف إحالتها أو اسم سورتها'
+    # one Uthmani text in several places: it converts, but the index cannot tell which place the author meant
+    many = len({h[:3] for h in hits}) > 1
+    return min(hits), (f'وردت بهذا اللفظ في أكثر من موضع [{listed(hits)}]؛ فأضف إحالتها ليُعرف موضعها' if many else '')
+
+def convert(verse, ref=None):
+    """verse: the text the author marked as a verse; ref: (surah name, ayah numbers or None) as written, or None.
+    -> the Uthmani text, or None when the verse must stay as written. Every call adds a line to REPORT."""
+    hit, note = place(verse, ref)
+    REPORT.append((hit is not None, verse.strip(), '' if hit else note))
+    return hit[3] if hit else None

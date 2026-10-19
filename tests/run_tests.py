@@ -586,6 +586,147 @@ with pdfplumber.open(ao + '.pdf') as d: p1 = d.pages[0]; big = [c_ for c_ in p1.
 ok('article with contents: title and contents on page 1, the text from page 2, the page numbers right', '<w:spacing w:before="1920"' in aps[0] and dots > 30 and len(big) > 10
    and ', 0 wrong' in tc and 'page not found' not in ra_.stdout and any('pageBreakBefore w:val="0"' in x and 'فهرس الموضوعات' in x for x in aps), tc.strip()[-60:])
 
+# 23. LibreOffice 24.2 looped for ever on a note like this one (a source reference whose first line holds the tab after
+#     the note's number), with its Word-imitating space shrinking on: the PDF route turns it off, and every conversion
+#     has a time limit
+import time
+t0 = time.time(); nh = os.path.join(OUT, 'note_hang'); rh = run(os.path.join(SK, 'make.py'), os.path.join(T, 'inputs', 'note_hang.md'), nh)
+ok('a source reference in a note no longer hangs the PDF engine', rh.returncode == 0 and os.path.exists(nh + '.pdf') and time.time() - t0 < 600, f'{time.time() - t0:.0f} s')
+mk_src = open(os.path.join(SK, 'make.py'), encoding='utf-8').read()
+ok('the PDF route turns off space shrinking only for a document that stalls, and limits every conversion', 'JustifyLinesWithShrinking" config:type="boolean">false' in mk_src
+   and "if it.filename == 'settings.xml' and NO_SHRINK" in mk_src and 'timeout=limit' in mk_src)
+
+# 24. index marks, «***» and citations leave the author's words as they are
+import indexes as ixm, cite as ct
+ts.IX.clear(); ts.IX_WANT.clear(); ts.UTHMANI = False
+mkt = 'قال {{علم|ابن تيمية}} و{{علم|شيخ الإسلام|ابن تيمية}} ونزل {{مكان|مكة}}.'
+vis = re.sub('[⁠‏‎‪‬⟦⟧⟬⟭`]|⟮\\d+⟯', '', ts.inline(mkt, {})).replace(' ', ' ')
+ok('index marks: the words stay, only the braces, the kind and the extra fields go', vis == 'قال ابن تيمية وشيخ الإسلام ونزل مكة.' and len(ts.IX) == 3
+   and [e['entry'] for e in ts.IX] == ['ابن تيمية', 'ابن تيمية', 'مكة'] and ixm.strip_marks(mkt) == 'قال ابن تيمية وشيخ الإسلام ونزل مكة.')
+poem = ts.runs(ts.inline('العلم يرفع بيتًا *** والجهل يهدم بيت العز', {}))
+ok('three asterisks between two halves of a verse are the author\'s text, not bold', '***' in ''.join(re.findall(r'<w:t[^>]*>([^<]*)</w:t>', poem)) and '<w:b/>' not in poem)
+ok('alphabetical order: hamza seats folded, «ال» left out for names, letters in their order', ixm.key('الأَنصار', True) == 'انصار' and ixm.key('إبراهيم') == 'ابراهيم'
+   and sorted(['يحيى', 'البخاري', 'أحمد', 'عمر'], key=lambda x: ixm.order(ixm.key(x, True))) == ['أحمد', 'البخاري', 'عمر', 'يحيى'])
+ok('rhyme letter of a verse: its last letter, past a final letter of prolongation', ixm.rhyme('والجهل يهدم بيت العز والشرفِ') == 'ف' and ixm.rhyme('قفا نبك من ذكرى حبيب ومنزلِي') == 'ل')
+ok('the opening basmala is recognised with or without marks, and nothing else is', all(ixm.is_basmala(x) for x in ('بسم الله الرحمن الرحيم', 'بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ', '﷽', '>> بسم الله الرحمن الرحيم'))
+   and not any(ixm.is_basmala(x) for x in ('بسم الله', 'بسم الله الرحمن الرحيم والحمد لله', 'باسم الله الرحمن الرحيم')))
+hit, why = q.place(im('51:56'), ('الذاريات', '٥٦')); many_hit, many_why = q.place(bare(im('55:13')), None)
+ok('verse index: a verse is placed by its letters; a wording found in many places needs its reference', hit and hit[:3] == (51, 56, 56) and not why and many_hit and 'أكثر من موضع' in many_why)
+ts.IX_WANT.add('آية'); ts.IX.clear(); ts.IX_UNPLACED.clear()
+ts.inline('قال تعالى: ﴿' + im('51:56') + '﴾ [الذاريات: ٥٦] و﴿' + bare(im('55:13')) + '﴾', {})
+ok('verse index: entries for placed verses, the others reported in Arabic', [e['place'] for e in ts.IX] == [(51, 56, 56)] and len(ts.IX_UNPLACED) == 1
+   and not re.search('[A-Za-z]', ts.IX_UNPLACED[0][1]))
+ts.IX_WANT.clear(); ts.IX.clear(); ts.IX_UNPLACED.clear()
+srcs = ct.load(os.path.join(T, 'inputs', 'sources.json'))
+ok('citations: Chicago full the first time, short after; author-date for APA and Harvard; MLA author and short title',
+   ct.note(srcs['fatawa'], '٣/ ٤٥', 'chicago', True).startswith('أحمد بن عبد الحليم ابن تيمية (ت: ٧٢٨هـ)، **مجموع الفتاوى**، تحقيق: عبد الرحمن بن محمد بن قاسم (المدينة المنورة: ')
+   and ct.note(srcs['fatawa'], '٣/ ٤٥', 'chicago', False) == 'ابن تيمية، **الفتاوى**، ٣/ ٤٥' and ct.note(srcs['fatawa'], '٣/ ٤٥', 'apa', True) == 'ابن تيمية (١٤١٦هـ)، ٣/ ٤٥'
+   and ct.note(srcs['fatawa'], '٣/ ٤٥', 'harvard', True) == 'ابن تيمية ١٤١٦هـ، ٣/ ٤٥' and ct.note(srcs['fatawa'], '٣/ ٤٥', 'mla', True) == 'ابن تيمية، **الفتاوى**، ٣/ ٤٥')
+ok('citations: the list of sources in each style; a Latin title in italic, APA initials', ct.bib(srcs['aune'], 'apa') == 'Aune, K. (2011). Much Less Religious, A Little More Spiritual. ⟨Feminist Review⟩, 97(1), 32-55.'
+   and ct.bib(srcs['aune'], 'chicago') == 'Aune, Kristin. "Much Less Religious, A Little More Spiritual". ⟨Feminist Review⟩ 97, no. 1 (2011): 32-55.'
+   and ct.bib(srcs['lisan'], 'chicago') == 'ابن منظور، محمد بن مكرم (ت: ٧١١هـ). **لسان العرب**. ط٣. بيروت: دار صادر، ١٤١٤هـ.')
+ok('citations: what a style needs and a source lacks is reported, in Arabic; what a style leaves out is not asked for',
+   ct.report(srcs, 'chicago') == ['CITE: ينقص «صحيح البخاري» لنظام Chicago: مكان النشر'] and ct.report(srcs, 'apa') == [] and ct.report(srcs, 'mla') == [])
+ts.CITES = srcs; ts.CITE_STYLE = 'chicago'; ts.CITED.clear()
+c1 = ts.expand_cites('{{مرجع|bukhari|١/ ٦}}، رقم (١).'); c2 = ts.expand_cites('انظر: {{مرجع|bukhari|٢/ ٣}}')
+ok('citations: a full stop only where the citation ends the note; the author\'s words around it untouched', c1.endswith('١/ ٦، رقم (١).') and '.،' not in c1 and c2 == 'انظر: البخاري، **الصحيح**، ٢/ ٣.')
+try: ts.expand_cites('{{مرجع|nosuch|١}}'); unknown = False
+except SystemExit as e: unknown = 'unknown source id' in str(e)
+ok('citations: an unknown source stops the build instead of printing a mark', unknown)
+ts.CITES = {}; ts.CITE_STYLE = None; ts.CITED.clear()
+body = ['@sort', 'يحيى', 'البخاري', 'أحمد', '@end', '@sort', '١- ب', '٢- أ', '@end']
+ok('@sort: the author\'s lines in alphabetical order, each unchanged; a numbered list keeps its order', ts.sort_blocks(body) == ['أحمد', 'البخاري', 'يحيى', '١- ب', '٢- أ'] and ts.SORT_KEPT == [2])
+ts.SORT_KEPT.clear()
+
+# 25. everything on request together: indexes, Chicago citations, a running header, the calligraphic basmala
+ix = os.path.join(OUT, 'indexes'); rix = run(os.path.join(SK, 'make.py'), os.path.join(T, 'inputs', 'indexes.md'), ix, '--cite=chicago',
+                                            f'--sources={os.path.join(T, "inputs", "sources.json")}', '--basmala=7')
+ok('build: indexes, citations, header, basmala', rix.returncode == 0 and os.path.exists(ix + '.pdf'), rix.stderr[-300:])
+X = {n: zipfile.ZipFile(ix + '.docx').read(n).decode() for n in ('word/document.xml', 'word/footnotes.xml', 'word/header1.xml', 'word/header2.xml', 'word/footer2.xml')}
+dests = mk.dest_pages(ix + '.pdf')
+ok('every index entry has a bookmark whose page the PDF names', len([k for k in dests if k.startswith('_ix')]) == X['word/document.xml'].count('w:name="_ix') and len(dests) >= 20, f'{len(dests)} pages read')
+lines = [''.join(re.findall(r'<w:t[^>]*>([^<]*)</w:t>', p_)) for p_ in re.findall(r'<w:p>.*?</w:p>', X['word/document.xml']) if 'w:leader="dot"' in p_]
+H2D = str.maketrans('٠١٢٣٤٥٦٧٨٩', '0123456789')
+def pages_in(t): return [int(x.translate(H2D)) for x in re.findall(r'[٠-٩]+', t.rsplit('\t', 1)[-1])] if '\t' in t else []
+first_index = min(int(x) for x in [p_.translate(H2D) for t_ in lines if 'فهرس الآيات القرآنية' in t_ for p_ in re.findall(r'[٠-٩]+$', t_)])
+ok('the contents list every index with its page', all(any(k in t_ and t_.rsplit('\t', 1)[-1].strip() not in ('٠٠', '؟') for t_ in lines) for k in ixm.KINDS.values()) and first_index > 4)
+ent = [t_ for t_ in lines if not any(k in t_ for k in list(ixm.KINDS.values()) + ['المقدمة', 'المبحث', 'المطلب', 'الخاتمة'])]
+ok('every index entry has its page numbers, none left at ٠٠ or ؟', len(ent) >= 18 and all(pages_in(t_) and '٠٠' not in t_ and '؟' not in t_ for t_ in ent), ' | '.join(ent[:3]))
+mark_pages = {e: p_ for e, p_ in dests.items()}
+yahya = [t_ for t_ in ent if t_.startswith('يحيى بن سعيد الأنصاري')]; taym = [t_ for t_ in ent if t_.startswith('ابن تيمية')]
+ok('people index: one entry for the different names given the same entry, the extra form not listed', len(taym) == 1 and not any(t_.startswith('شيخ الإسلام') or t_.startswith('الإمام أحمد') for t_ in ent)
+   and any(t_.startswith('أحمد بن حنبل') for t_ in ent))
+def reading(pg, cond=lambda c_: True):   # a page's text in reading order: line by line, each from the right
+    rows = {}
+    for c_ in pg.chars:
+        if cond(c_): rows.setdefault(round(c_['top']), []).append(c_)
+    return ''.join(c_['text'] for t_, cs_ in sorted(rows.items()) for c_ in sorted(cs_, key=lambda c_: -c_['x0']))
+with pdfplumber.open(ix + '.pdf') as d:
+    texts = [mk.norm(reading(pg)) for pg in d.pages]
+    tops = [reading(pg, lambda c_: c_['top'] < 60) for pg in d.pages]
+    basm = [(c_['fontname'], n_) for n_, pg in enumerate(d.pages, 1) for c_ in pg.chars if c_['text'] == chr(0x1EE06)]
+ar = lambda s_: mk.norm(s_)
+body_pages = range(1, first_index)
+def on(word): return [n_ for n_ in body_pages if ar(word) in texts[n_ - 1]]
+ok('index pages are the pages where the entries stand in the text', pages_in(yahya[0]) == on('يحيى بن سعيد الأنصاري')
+   and pages_in([t_ for t_ in ent if 'لَّا لِيَعْبُدُون' in t_ or 'ليعبدون' in t_][0]) == on('الذاريات')[:1], f'{yahya} {on("يحيى بن سعيد الأنصاري")}')
+quran_lines = [t_ for t_ in ent if t_.startswith('﴿')]
+ok('verse index: by surah in the Mushaf\'s order, each verse with its ayah number', len(quran_lines) == 3 and '[١٤٣]' in quran_lines[0] and '[٥٦]' in quran_lines[1] and '[٦]' in quran_lines[2]
+   and X['word/document.xml'].find('سورة البقرة') < X['word/document.xml'].find('سورة الذاريات') < X['word/document.xml'].find('سورة الشرح'))
+ok('poetry index: grouped by rhyme letter, the author\'s «***» kept', 'قافية الفاء' in X['word/document.xml'] and any('***' in t_ for t_ in ent))
+fx = ''.join(re.findall(r'<w:t[^>]*>([^<]*)</w:t>', X['word/footnotes.xml'])).replace('⁠', '').replace(' ', ' ')
+ok('citations in the notes: Chicago full first, short after, the author\'s words kept', 'أحمد بن عبد الحليم ابن تيمية (ت: ٧٢٨هـ)، مجموع الفتاوى، تحقيق' in fx
+   and 'انظر: ابن تيمية، الفتاوى، ١٠/ ١٢، وفيه ذكر الحسن البصري.' in fx and '١/ ٦، رقم (١).' in fx and '{{' not in fx)
+ok('citations: make.py reports what the style still lacks, in Arabic', 'CITE: ينقص «صحيح البخاري» لنظام Chicago: مكان النشر' in rix.stdout)
+src_list = X['word/document.xml'][X['word/document.xml'].rfind('فهرس المصادر والمراجع'):]
+ok('list of sources: alphabetical, in the style, a Latin source left to right', src_list.find('ابن تيمية') < src_list.find('ابن منظور') < src_list.find('البخاري') < src_list.find('Aune')
+   and '<w:bidi w:val="0"/>' in src_list and 'Feminist Review' in src_list)
+with pdfplumber.open(ix + '.pdf') as d:   # the number at the head of the Latin note: on the line of its first word
+    lat = [c_ for pg in d.pages for k_ in pg.chars if k_['text'] == 'K' and k_['top'] > 650 for c_ in pg.chars if abs(c_['top'] - k_['top']) < 2 and c_['text'] in '1١' and c_['x0'] < k_['x0']]
+ok('PDF: a Latin note with an italic title keeps its Western number «(1)» in Times', lat and all(c_['text'] == '1' and 'Liberation' in c_['fontname'] or 'Times' in c_['fontname'] for c_ in lat), str([(c_['text'], c_['fontname']) for c_ in lat]))
+ok('header: the title on every page but the first, over a rule; the first page keeps its number when it has no cover', 'أثر العلم في بناء الإنسان' in X['word/header1.xml']
+   and 'w:pBdr' in open(os.path.join(SK, 'typeset.py'), encoding='utf-8').read() and 'أثر العلم' not in X['word/header2.xml'] and '<w:titlePg/>' in X['word/document.xml']
+   and ar('أثر العلم في بناء الإنسان') not in ar(tops[0]) and all(ar('أثر العلم في بناء الإنسان') in ar(t_) for t_ in tops[1:]))
+ok('basmala: the opening line set as Lotus Lotfi\'s basmala, the text untouched otherwise', chr(0x1EE06) in X['word/document.xml'] and 'بسم الله الرحمن الرحيم' not in X['word/document.xml']
+   and basm and all('LotusLotfi' in f_ for f_, n_ in basm) and 'FONTS' not in rix.stdout)
+rn_off = run(os.path.join(SK, 'typeset.py'), os.path.join(T, 'inputs', 'indexes.md'), os.path.join(OUT, 'ix_plain.docx'), 'word', '--cite=chicago', f'--sources={os.path.join(T, "inputs", "sources.json")}')
+ok('without --basmala the opening basmala stays as written', 'بسم الله الرحمن الرحيم' in zipfile.ZipFile(os.path.join(OUT, 'ix_plain.docx')).read('word/document.xml').decode())
+
+tl = os.path.join(OUT, 'toc_late.md'); open(tl, 'w', encoding='utf-8').write('# عنوان المقالة\nنص فيه {{علم|ابن تيمية}}.\n# المبحث الأول\nنص.\n@index علم\n@toc\n')
+run(os.path.join(SK, 'typeset.py'), tl, os.path.join(OUT, 'toc_late.docx'), 'word')
+tlx = [p_ for p_ in re.findall(r'<w:p>.*?</w:p>', zipfile.ZipFile(os.path.join(OUT, 'toc_late.docx')).read('word/document.xml').decode()) if 'فهرس الموضوعات' in p_ and 'Heading1' in p_]
+ok('contents placed after the text start a page of their own, in an article too', len(tlx) == 1 and 'pageBreakBefore w:val="0"' not in tlx[0])
+
+# 26. Traditional Arabic on request (a stand-in font here: the real files are added to assets/traditional)
+import shutil as sh
+tdir = os.path.join(OUT, 'trad_fonts'); os.makedirs(tdir, exist_ok=True)
+for f_ in ('DejaVuSans.ttf', 'DejaVuSans-Bold.ttf'): sh.copy(os.path.join('/usr/share/fonts/truetype/dejavu', f_), tdir)
+ta = os.path.join(OUT, 'trad.md'); open(ta, 'w', encoding='utf-8').write('بسم الله الرحمن الرحيم\n# عنوان المقالة\n@header\n@toc\n# المقدمة\nنص المقدمة[^1].\n## المطلب الأول\nنص.\n[^1]: حاشية.\n')
+to_ = os.path.join(OUT, 'trad_out', 'a')
+rt = subprocess.run([sys.executable, os.path.join(SK, 'make.py'), ta, to_, '--font=traditional', '--basmala=1'], capture_output=True, text=True, env={**os.environ, 'SAFFAF_TRADITIONAL_DIR': tdir})
+tz = sorted(zipfile.ZipFile(os.path.join(OUT, 'trad_out', 'خطوط-لملف-Word.zip')).namelist()) if rt.returncode == 0 else []
+td = zipfile.ZipFile(to_ + '.docx').read('word/document.xml').decode() if rt.returncode == 0 else ''
+ok('Traditional Arabic: the body in it, the basmala in Lotus Lotfi, both in the fonts zip', rt.returncode == 0 and tz == ['DejaVuSans-Bold.ttf', 'DejaVuSans.ttf', '_LotusLotfi-Bold.ttf', '_LotusLotfi-Regular.ttf']
+   and 'w:cs="_Lotus Lotfi"' in td and 'DejaVu Sans' in zipfile.ZipFile(to_ + '.docx').read('word/styles.xml').decode() and 'FONTS' not in rt.stdout, rt.stderr[-200:])
+with pdfplumber.open(to_ + '.pdf') as d: tf = {c_['fontname'].split('+')[-1] for pg in d.pages for c_ in pg.chars}; t1 = mk.norm(reading(d.pages[0]))
+ok('Traditional Arabic (PDF): only its two faces and Lotus for the basmala; the title and the contents on page 1', tf == {'DejaVuSans', 'DejaVuSans-Bold', '_LotusLotfi'} and mk.norm('عنوان المقالة') in t1 and mk.norm('فهرس الموضوعات') in t1, str(tf))
+rt2 = subprocess.run([sys.executable, os.path.join(SK, 'typeset.py'), ta, os.path.join(OUT, 'x.docx'), 'word', '--font=traditional'], capture_output=True, text=True, env={**os.environ, 'SAFFAF_TRADITIONAL_DIR': os.path.join(OUT, 'no_such_dir')})
+ok('Traditional Arabic asked for without its files: a clear stop', rt2.returncode != 0 and 'assets/traditional' in rt2.stderr)
+
+# 27. symbol fonts (AGA Arabesque stores ﷺ as «a»): reported always, converted only with --symbols
+r0, m0 = to_md(os.path.join(T, 'formats', 'stress_article.docx'))
+r1 = run(os.path.join(SK, 'to_md.py'), os.path.join(T, 'formats', 'stress_article.docx'), os.path.join(OUT, 'sym.md'), '--symbols'); m1 = open(os.path.join(OUT, 'sym.md'), encoding='utf-8').read()
+ok('symbol fonts: reported, and the text left as written without --symbols', 'SYMBOLS: aga arabesque: «a»×1' in r0.stdout and 'وقال النبي a:' in m0)
+ok('symbol fonts: with --symbols the known sign becomes its standard character, and nothing else changes', 'وقال النبي ﷺ:' in m1 and m1.replace('وقال النبي ﷺ:', 'وقال النبي a:') == m0)
+
+# 28. the settings panel: analyze.py reads the draft; SKILL.md tells Claude to ask before typesetting
+ra2 = run(os.path.join(SK, 'analyze.py'), os.path.join(T, 'inputs', 'indexes.md')).stdout
+ok('analyze.py: what the text holds, for the panel', 'opens with the basmala: True' in ra2 and 'verses marked by the author: 3' in ra2 and 'citation style' in ra2)
+ok('SKILL.md: the panel comes before typesetting, and every option is documented', '## The settings panel' in skill_md and 'wait for the answer' in skill_md
+   and all(x in skill_md for x in ('--font=traditional', '--basmala=N', '--cite=', '--symbols', '@header', '@index', '@sort', 'basmala-shapes.png'))
+   and os.path.exists(os.path.join(SK, '..', 'assets', 'basmala-shapes.png')))
+ok('the bounded exceptions are stated in CLAUDE.md and SKILL.md alike', all(all(x in d_ for x in ('Citation style', 'basmala', 'Symbol fonts')) for d_ in (rules, skill_md)))
+
 failed = [n for n, p, _ in results if not p]
 print(f'\n{len(results) - len(failed)}/{len(results)} passed. Outputs: {OUT}')
 sys.exit(1 if failed else 0)

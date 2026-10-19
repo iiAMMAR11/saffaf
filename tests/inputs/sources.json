@@ -1,0 +1,13 @@
+{
+  "fatawa": {"type": "book", "author": [{"name": "ابن تيمية", "full": "أحمد بن عبد الحليم ابن تيمية", "inverted": "ابن تيمية، أحمد بن عبد الحليم", "death": "٧٢٨هـ"}],
+             "title": "مجموع الفتاوى", "short": "الفتاوى", "editor": "عبد الرحمن بن محمد بن قاسم",
+             "place": "المدينة المنورة", "publisher": "مجمع الملك فهد لطباعة المصحف الشريف", "year": "١٤١٦هـ"},
+  "bukhari": {"type": "book", "author": [{"name": "البخاري", "full": "محمد بن إسماعيل البخاري", "inverted": "البخاري، محمد بن إسماعيل", "death": "٢٥٦هـ"}],
+              "title": "صحيح البخاري", "short": "الصحيح", "editor": "محمد زهير الناصر", "edition": "١",
+              "publisher": "دار طوق النجاة", "year": "١٤٢٢هـ"},
+  "lisan": {"type": "book", "author": [{"name": "ابن منظور", "full": "محمد بن مكرم ابن منظور", "inverted": "ابن منظور، محمد بن مكرم", "death": "٧١١هـ"}],
+            "title": "لسان العرب", "edition": "٣", "place": "بيروت", "publisher": "دار صادر", "year": "١٤١٤هـ"},
+  "aune": {"type": "article", "author": [{"family": "Aune", "given": "Kristin"}],
+           "title": "Much Less Religious, A Little More Spiritual", "journal": "Feminist Review",
+           "volume": "97", "issue": "1", "year": "2011", "pages": "32-55"}
+}

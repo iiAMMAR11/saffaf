@@ -7,7 +7,10 @@ usage: python3 to_md.py INPUT OUTPUT.md
   .epub                         -> chapters in reading order -> LibreOffice -> .docx -> as above
   .pdf                          -> refused: text extracted from PDF is damaged; ask for the original
 Every result is checked for PDF-copy damage (reversed lam-alef); the report says DAMAGED when found.
-Prints a short report (format, footnotes found, warnings) to stdout."""
+Prints a short report (format, footnotes found, warnings) to stdout.
+Word files that draw signs with a symbol font (AGA Arabesque and the like: the file stores «a» and the font draws ﷺ)
+are reported on a SYMBOLS line. Only with --symbols (the user asked for it) are the signs whose meaning is known
+written as their standard character; the others stay as they are and are named on the line."""
 import os, re, sys, shutil, subprocess, tempfile, zipfile, posixpath
 import xml.etree.ElementTree as ET
 
@@ -17,6 +20,16 @@ BIDI_CTRL = dict.fromkeys(map(ord, '‪‫‬‭‮⁦⁧⁨⁩﻿'))
 SOFFICE = '/mnt/skills/public/docx/scripts/office/soffice.py'
 SOFFICE_CMD = ['python3', SOFFICE] if os.path.exists(SOFFICE) else [shutil.which('soffice') or shutil.which('libreoffice') or 'soffice']
 warnings = []
+# Symbol fonts: font name -> {character stored in the file: the standard character the font draws for it}. Only
+# mappings that were checked go here; a character with no entry is left as it is and reported.
+SYMBOL_FONTS = {
+    'aga arabesque': {'a': '\ufdfa'},           # «a» -> ﷺ (seen in a real file: «وقال النبي a»)
+    'aga arabesque desktop': {'a': '\ufdfa'},
+}
+SYMBOLS_FOUND = {}    # font -> {character: count}
+CONVERT_SYMBOLS = False
+def symbol_font(name):
+    return (name or '').strip().lower() if (name or '').strip().lower() in SYMBOL_FONTS else None
 
 # ---------------- LibreOffice bridge ----------------
 def to_docx(path):
@@ -100,8 +113,17 @@ class Docx:
                     rpr = c.find(W + 'rPr')
                     explicit = is_bold(rpr, explicit=True)
                     bold = explicit if explicit is not None else (pbold or bool(self.style(wval(rpr, 'rStyle'), 'bold')))
+                    rf = rpr.find(W + 'rFonts') if rpr is not None else None
+                    sf = symbol_font(rf.get(W + 'ascii') or rf.get(W + 'hAnsi') or rf.get(W + 'cs')) if rf is not None else None
                     for x in c:
-                        if x.tag == W + 't': out.append((x.text or '', bold))
+                        if x.tag == W + 't' and sf:
+                            txt = ''
+                            for ch in x.text or '':
+                                if ch.isspace(): txt += ch; continue
+                                SYMBOLS_FOUND.setdefault(sf, {}).setdefault(ch, 0); SYMBOLS_FOUND[sf][ch] += 1
+                                txt += SYMBOL_FONTS[sf].get(ch, ch) if CONVERT_SYMBOLS else ch
+                            out.append((txt, bold))
+                        elif x.tag == W + 't': out.append((x.text or '', bold))
                         elif x.tag == W + 'tab': out.append(('\t', False))
                         elif x.tag in (W + 'br', W + 'cr'): out.append((' ', False))
                         elif x.tag == W + 'noBreakHyphen': out.append(('-', bold))
@@ -109,7 +131,14 @@ class Docx:
                             lab = 'f' + x.get(W + 'id'); self.used.append(('f', x.get(W + 'id'), lab)); out.append((f'[^{lab}]', False))
                         elif x.tag == W + 'endnoteReference':
                             lab = 'e' + x.get(W + 'id'); self.used.append(('e', x.get(W + 'id'), lab)); out.append((f'[^{lab}]', False))
-                        elif x.tag == W + 'sym': out.append((chr(int(x.get(W + 'char'), 16)) if x.get(W + 'char') else '', bold))
+                        elif x.tag == W + 'sym':
+                            ch = chr(int(x.get(W + 'char'), 16)) if x.get(W + 'char') else ''
+                            sf = symbol_font(x.get(W + 'font'))
+                            if sf and ch:   # Word stores a symbol as F000 + its code in the font
+                                c0 = chr(ord(ch) - 0xF000) if 0xF000 <= ord(ch) <= 0xF0FF else ch
+                                SYMBOLS_FOUND.setdefault(sf, {}).setdefault(c0, 0); SYMBOLS_FOUND[sf][c0] += 1
+                                ch = SYMBOL_FONTS[sf].get(c0, ch) if CONVERT_SYMBOLS else ch
+                            out.append((ch, bold))
                         elif x.tag not in (W + 'rPr', W + 'footnoteRef', W + 'endnoteRef'):
                             walk(x)   # drawings / text boxes inside runs
                 elif c.tag == W + 'txbxContent':
@@ -235,7 +264,8 @@ def damage_check(md):
 
 # ---------------- main ----------------
 if __name__ == '__main__':
-    src, dst = sys.argv[1], sys.argv[2]
+    CONVERT_SYMBOLS = '--symbols' in sys.argv
+    src, dst = [a for a in sys.argv[1:] if not a.startswith('--')][:2]
     ext = os.path.splitext(src)[1].lower(); notes = 0
     if ext in ('.txt', '.md', '.markdown', '.text', ''):
         raw = open(src, 'rb').read()
@@ -253,4 +283,8 @@ if __name__ == '__main__':
     open(dst, 'w', encoding='utf-8').write(md)
     print(f'format: {ext or "plain"} | notes: {notes} | lines: {md.count(chr(10))} -> {dst}')
     for w in warnings: print('WARNING:', w)
+    for font, chars in SYMBOLS_FOUND.items():
+        known = {c: SYMBOL_FONTS[font][c] for c in chars if c in SYMBOL_FONTS[font]}
+        print(f'SYMBOLS: {font}: ' + ', '.join(f'«{c}»×{n}' + (f' = {known[c]}' if c in known else ' (meaning unknown, left as is)') for c, n in chars.items())
+              + (' — converted' if CONVERT_SYMBOLS else ' — left as written; with --symbols the known ones become their standard character'))
     damage_check(md)

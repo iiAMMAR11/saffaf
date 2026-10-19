@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
-"""One-shot pipeline: input.md -> OUT.docx (for Word) + OUT.pdf (via LibreOffice), with auto TOC.
-usage: python3 make.py input.md OUTPUT_DIR/NAME [--uthmani]   (writes NAME.docx, NAME.pdf and the fonts zip)
---uthmani: set the verses between ﴿ ﴾ in Uthmani script — only when the user asked for it."""
+"""One-shot pipeline: input.md -> OUT.docx (for Word) + OUT.pdf (via LibreOffice), with the contents and the indexes
+paged automatically.
+usage: python3 make.py input.md OUTPUT_DIR/NAME [options]   (writes NAME.docx, NAME.pdf and the fonts zip)
+Every option is on request only — the user chose it:
+  --uthmani              verses in Uthmani script
+  --font=traditional     the body in Traditional Arabic instead of Lotus Lotfi
+  --basmala=N            the opening basmala set as Lotus Lotfi's basmala number N (1-7)
+  --cite=STYLE --sources=FILE   citations in chicago | apa | harvard | mla, from the sources file (see cite.py)"""
 import os, sys, re, json, shutil, subprocess, tempfile, zipfile, unicodedata
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import indexes
 # claude.ai ships a sandbox-safe LibreOffice wrapper with its docx skill; elsewhere call soffice directly
 SOFFICE = '/mnt/skills/public/docx/scripts/office/soffice.py'
 SOFFICE_CMD = ['python3', SOFFICE] if os.path.exists(SOFFICE) else [shutil.which('soffice') or shutil.which('libreoffice') or 'soffice']
@@ -16,6 +23,7 @@ def setup():
     os.makedirs(fd, exist_ok=True)
     for f in os.listdir(os.path.join(HERE, '..', 'assets', 'fonts')):
         shutil.copy(os.path.join(HERE, '..', 'assets', 'fonts', f), fd)
+    if TRAD: shutil.copy(TRAD[1], fd); TRAD[2] and shutil.copy(TRAD[2], fd)
     shutil.copy(os.path.join(HERE, '..', 'assets', 'symbols', 'NotoNaskhArabic-Regular.ttf'), fd)
     if UTHMANI: shutil.copy(os.path.join(HERE, '..', 'assets', 'quran', 'UthmanicHafs_V22.ttf'), fd)
     if shutil.which('fc-cache'): subprocess.run(['fc-cache', '-f'], capture_output=True)
@@ -23,16 +31,32 @@ def setup():
     open(PROFILE + '/user/registrymodifications.xcu', 'w').write(
         '<?xml version="1.0" encoding="UTF-8"?><oor:items xmlns:oor="http://openoffice.org/2001/registry" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
         '<item oor:path="/org.openoffice.Office.Common/I18N/CTL"><prop oor:name="CTLTextNumerals" oor:op="fuse"><value>3</value></prop></item>'
-        '<item oor:path="/org.openoffice.Office.Common/I18N/CTL"><prop oor:name="CTLFont" oor:op="fuse"><value>true</value></prop></item></oor:items>')
+        '<item oor:path="/org.openoffice.Office.Common/I18N/CTL"><prop oor:name="CTLFont" oor:op="fuse"><value>true</value></prop></item>'
+        # bookmarks become named destinations in the PDF: that is how the page of each index entry is read
+        '<item oor:path="/org.openoffice.Office.Common/Filter/PDF/Export"><prop oor:name="ExportBookmarksToPDFDestination" oor:op="fuse"><value>true</value></prop></item></oor:items>')
 
-def lo(args):
-    subprocess.run(SOFFICE_CMD + [f'-env:UserInstallation=file://{PROFILE}', '--headless'] + args, capture_output=True)
+def lo(args, limit=600):
+    """Run LibreOffice. A conversion takes seconds; one that runs on past the limit is a LibreOffice loop: it is stopped
+    and False returned (after the full ten minutes the build stops with a message rather than wait for ever)."""
+    try: subprocess.run(SOFFICE_CMD + [f'-env:UserInstallation=file://{PROFILE}', '--headless'] + args, capture_output=True, timeout=limit)
+    except subprocess.TimeoutExpired:
+        subprocess.run(['pkill', '-9', '-x', 'soffice.bin'], capture_output=True)
+        if limit >= 600: sys.exit('LibreOffice did not finish converting ' + os.path.basename(args[-1]) + ' (stopped after 10 minutes)')
+        return False
+    return True
 
 def patch_odt(src, dst, labels=None):
     """LibreOffice's ODT of the Word file, with our note settings; labels: each footnote's number, when written in by hand."""
     zin = zipfile.ZipFile(src); zout = zipfile.ZipFile(dst, 'w')
     for it in zin.infolist():
         data = zin.read(it.filename)
+        if it.filename == 'settings.xml' and NO_SHRINK:
+            # LibreOffice 24.2 imitates Word by shrinking the spaces of a justified line (JustifyLinesWithShrinking, set
+            # for Word files). Together with its own letter stretching in Arabic lines it can loop for ever on a note
+            # whose first line holds the tab after the note's number (a common source reference was enough). It stays
+            # on (lines set with it need less stretching), and is turned off only for a document whose conversion stalls.
+            data = data.decode().replace('config:name="JustifyLinesWithShrinking" config:type="boolean">true',
+                                         'config:name="JustifyLinesWithShrinking" config:type="boolean">false').encode()
         if it.filename in ('styles.xml', 'content.xml'):
             t = data.decode()
             def fix(m):
@@ -49,6 +73,17 @@ def patch_odt(src, dst, labels=None):
             # number stays Western, in its Latin font).
             t = re.sub(r'<text:note-body><text:p\b[^>]*>(?:<text:span\b[^>]*>)?(?:<text:tab/>)?',
                        lambda m: m.group(0) if m.group(0).endswith('<text:tab/>') else m.group(0) + '<text:tab/>', t)
+            if it.filename == 'content.xml':
+                # LibreOffice draws a note's own number in the look of the note's paragraph. A note that is one run of
+                # Latin text gets that look from it; one with an italic title (a citation style) is several runs and
+                # its number would fall back to the Arabic note style, «(١)». So a left-to-right note paragraph takes
+                # the look of its first run (not its italic or bold).
+                for ps, ts in set(re.findall(r'<text:note-body><text:p text:style-name="([^"]+)"><text:span text:style-name="([^"]+)">', t)):
+                    pm = re.search(r'<style:style style:name="' + re.escape(ps) + r'" style:family="paragraph"[^>]*>(.*?)</style:style>', t)
+                    tm = re.search(r'<style:style style:name="' + re.escape(ts) + r'" style:family="text"[^>]*><style:text-properties([^>]*)/>', t)
+                    if not pm or not tm or 'style:writing-mode="lr-tb"' not in pm.group(1) or '<style:text-properties' in pm.group(1): continue
+                    props = re.sub(r'\s(fo:font-style|style:font-style-asian|style:font-style-complex|fo:font-weight|style:font-weight-asian|style:font-weight-complex)="[^"]*"', '', tm.group(1))
+                    t = t[:pm.end(1)] + f'<style:text-properties{props}/>' + t[pm.end(1):]
             if it.filename == 'content.xml' and labels:
                 # LibreOffice's own count went wrong: write each number in by hand. The note's own label becomes one word
                 # joiner (no width, no break: the lines are set as before; a bidi mark there shifts the note's first line
@@ -96,16 +131,45 @@ def to_pdf(docx, pdf):
     # keeps that number when the line then moves to the next page because its note no longer fits there: the note shows
     # (2) or (3) on its new page. Every layout pass does it again (no setting or reload helps), so when a page's numbers
     # are not 1, 2, 3… every footnote gets its number written in by hand, counted from where the notes really fell.
+    global NO_SHRINK
     labels = None
     for _ in range(3):
         patch_odt(odt + '.lo', odt, labels)
-        lo(['--convert-to', 'pdf', '--outdir', d, odt])
+        if not lo(['--convert-to', 'pdf', '--outdir', d, odt], limit=600 if NO_SHRINK else 150):
+            NO_SHRINK = True   # it stalled: once more without space shrinking, for the rest of this build
+            patch_odt(odt + '.lo', odt, labels); lo(['--convert-to', 'pdf', '--outdir', d, odt])
         refs = note_refs(odt[:-4] + '.pdf')
         want = [i + 1 for r in refs for i in range(len(r))]
         if labels is None and all(sorted(r, key=lambda x: int(x or 0)) == [str(i + 1) for i in range(len(r))] for r in refs): break
         if labels == want: break
         labels = want
     shutil.copy(odt[:-4] + '.pdf', pdf); shutil.rmtree(d)
+
+def dest_pages(pdf):
+    """The page of every bookmark the skill set (index entries «_ix…», footnote references «_fn…»), from the PDF's
+    named destinations."""
+    import pdfplumber
+    from pdfminer.pdftypes import resolve1
+    out = {}
+    with pdfplumber.open(pdf) as doc:
+        at = {p.page_obj.pageid: i + 1 for i, p in enumerate(doc.pages)}
+        cat = doc.doc.catalog
+        dests = resolve1(cat['Dests']) if 'Dests' in cat else {}
+        if not dests and 'Names' in cat:   # a name tree
+            def walk(node):
+                node = resolve1(node)
+                for i in range(0, len(resolve1(node.get('Names', []))), 2):
+                    n = resolve1(node['Names']); dests[n[i].decode() if isinstance(n[i], bytes) else n[i]] = n[i + 1]
+                for k in resolve1(node.get('Kids', [])): walk(k)
+            dests = {}; walk(resolve1(cat['Names']).get('Dests', {}))
+        for name, d in dests.items():
+            name = name.decode() if isinstance(name, bytes) else str(name)
+            name = re.sub(r'^5F', '_', name)   # LibreOffice writes the «_» of a bookmark's name as its hex code
+            if not re.match(r'^_(ix|fn)\d+$', name): continue
+            d = resolve1(d); d = resolve1(d['D']) if isinstance(d, dict) else d
+            pg = at.get(getattr(d[0], 'objid', None)) if isinstance(d, list) and d else None
+            if pg: out[name] = pg
+    return out
 
 DIG = str.maketrans('\u0660\u0661\u0662\u0663\u0664\u0665\u0666\u0667\u0668\u0669\u06F0\u06F1\u06F2\u06F3\u06F4\u06F5\u06F6\u06F7\u06F8\u06F9', '01234567890123456789')
 def norm(s):
@@ -120,13 +184,16 @@ def headings(md):
     """The entries of the contents: the # and ## headings (the contents do not list themselves, and an article with no
     cover does not list its own title, its first line)."""
     out = []
-    lines = open(md, encoding='utf-8').read().split('\n'); text = [l for l in lines if l.strip()]
+    lines = open(md, encoding='utf-8').read().split('\n')
+    text = [l for l in lines if l.strip() and not l.startswith('@header')]
+    if text and indexes.is_basmala(text[0]): text = text[1:]   # an opening basmala stands above the title
     title = text[0] if text and text[0].startswith('# ') else None   # no front matter: the first line is the article's title
     for ln in lines:
         if ln == title: title = None; continue
         if ln.startswith('## '): out.append((ln[3:], 2))
         elif ln.startswith('# '): out.append((ln[2:], 1))
-    return [(re.sub(r'\*\*|\[\^[^\]]+\]', '', t).strip(), l) for t, l in out]
+        elif indexes.directive(ln): out.append((indexes.KINDS[indexes.directive(ln)], 1))
+    return [(re.sub(r'\*\*|\[\^[^\]]+\]', '', indexes.strip_marks(t)).strip(), l) for t, l in out]
 
 def heading_rows(pdf):
     """Per page, its lines as [(top, chars)] — without the contents: their level-1 entries are bold like the headings
@@ -162,7 +229,8 @@ def find_pages(pdf, heads):
 def keep_heads(md):
     """The # / ## / ### headings in order — the ones that must stay with the paragraph after them (typeset.py counts
     them the same way for --break-before). A # heading starts a new page anyway when the document has a cover."""
-    return [re.sub(r'\*\*|\[\^[^\]]+\]', '', ln.split(' ', 1)[1]).strip() for ln in open(md, encoding='utf-8').read().split('\n') if ln.startswith(('# ', '## ', '### '))]
+    return [indexes.KINDS[indexes.directive(ln)] if indexes.directive(ln) else re.sub(r'\*\*|\[\^[^\]]+\]', '', indexes.strip_marks(ln.split(' ', 1)[1])).strip()
+            for ln in open(md, encoding='utf-8').read().split('\n') if ln.startswith(('# ', '## ', '### ')) or indexes.directive(ln)]
 
 def lone_heads(pdf, heads):
     """Indexes of the headings left alone at the foot of a page. LibreOffice keeps a heading with the next paragraph,
@@ -183,6 +251,7 @@ def lone_heads(pdf, heads):
     return out
 
 BREAKS = []
+NO_SHRINK = False   # set when LibreOffice stalled on this document (see patch_odt)
 def lo_pdf(ts, md, docx, pdf, args):
     """The PDF route: build, then give every heading left alone at the foot of a page a page break before it and rebuild."""
     heads = keep_heads(md)
@@ -197,10 +266,15 @@ FONTS_ZIP = 'خطوط-لملف-Word.zip'
 def fonts_zip(docx):
     """One zip beside the Word file with the fonts it needs: the two Lotus Lotfi files always; the Quran font whenever
     the document has at least one verse set in Uthmani script (typeset.py embeds that font only then); and the symbols
-    font, with its licence, whenever a character is set in it."""
+    font, with its licence, whenever a character is set in it. With Traditional Arabic (on request) its files replace the
+    Lotus ones, which come along only when the opening basmala was set in Lotus Lotfi."""
     adir = os.path.join(HERE, '..', 'assets')
-    files = [(os.path.join(adir, 'fonts', n), n) for n in sorted(os.listdir(os.path.join(adir, 'fonts')))]
     z = zipfile.ZipFile(docx)
+    lotus = [(os.path.join(adir, 'fonts', n), n) for n in sorted(os.listdir(os.path.join(adir, 'fonts')))]
+    if TRAD:
+        files = [(f, os.path.basename(f)) for f in TRAD[1:] if f]
+        if 'w:cs="_Lotus Lotfi"' in z.read('word/document.xml').decode(): files += lotus
+    else: files = lotus
     if 'word/fonts/font1.odttf' in z.namelist(): files.append((os.path.join(adir, 'quran', 'UthmanicHafs_V22.ttf'), 'UthmanicHafs_V22.ttf'))
     if any('w:cs="Noto Naskh Arabic"' in z.read(n).decode() for n in ('word/document.xml', 'word/footnotes.xml')):
         files += [(os.path.join(adir, 'symbols', 'NotoNaskhArabic-Regular.ttf'), 'NotoNaskhArabic-Regular.ttf'), (os.path.join(adir, 'symbols', 'OFL.txt'), 'NotoNaskhArabic-OFL.txt')]
@@ -212,7 +286,7 @@ def fonts_zip(docx):
 HINDI = str.maketrans('0123456789', '٠١٢٣٤٥٦٧٨٩')
 # The fonts the PDF may use: Lotus Lotfi, the Quran font, the symbols font, and Times (Liberation Serif where Times is
 # not installed) for Latin text and the few signs Lotus lacks; Courier draws the second-level bullet «o».
-OWN = ('LotusLotfi', 'KFGQPC', 'NotoNaskhArabic', 'Times', 'LiberationSerif', 'Courier', 'LiberationMono')
+OWN = ['LotusLotfi', 'KFGQPC', 'NotoNaskhArabic', 'Times', 'LiberationSerif', 'Courier', 'LiberationMono']
 ARABIC = re.compile('[\u0600-\u06FF\u0750-\u077F\u0870-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]')
 def font_files():
     """PostScript name -> file of the fonts LibreOffice can use besides the skill's own: fontconfig's list where there is
@@ -238,6 +312,9 @@ def stray_fonts(pdf):
     a = os.path.join(HERE, '..', 'assets')
     has = {k: set(TTFont(os.path.join(a, f)).getBestCmap()) for k, f in
            (('LotusLotfi', 'fonts/_LotusLotfi-Regular.ttf'), ('NotoNaskhArabic', 'symbols/NotoNaskhArabic-Regular.ttf'), ('KFGQPC', 'quran/UthmanicHafs_V22.ttf'))}
+    if TRAD:   # the body font asked for: its own files (bold too) decide what it has
+        for f in TRAD[1:]:
+            if f: k = TTFont(f, lazy=True)['name'].getDebugName(6); OWN.insert(0, k); has[k] = set(TTFont(f).getBestCmap())
     files = None; other = {}
     def cmap(font):   # Times / Courier, as installed: None when the file cannot be found (then nothing is reported)
         nonlocal files
@@ -258,26 +335,49 @@ def stray_fonts(pdf):
                 if bad and n not in out.setdefault(ch, []): out[ch].append(n)
     return {ch: pages for ch, pages in out.items() if pages}
 
+TRAD = None
 if __name__ == '__main__':
-    UTHMANI = ['--uthmani'] if '--uthmani' in sys.argv else []
-    md, out = [a for a in sys.argv[1:] if a != '--uthmani'][:2]
+    flags = [a for a in sys.argv[1:] if a.startswith('--')]
+    UTHMANI = ['--uthmani'] if '--uthmani' in flags else []
+    md, out = [a for a in sys.argv[1:] if not a.startswith('--')][:2]
+    opt = lambda name: next((a.split('=', 1)[1] for a in flags if a.startswith(f'--{name}=')), None)
+    if opt('sources'): flags = [f'--sources={os.path.abspath(opt("sources"))}' if a.startswith('--sources=') else a for a in flags]
+    if opt('font') == 'traditional':
+        from fonts import traditional_files
+        TRAD = traditional_files()
+        if not TRAD: sys.exit('Traditional Arabic was asked for, but its font files are not in assets/traditional')
     os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
     setup()
     w = tempfile.mkdtemp(); ts = os.path.join(HERE, 'typeset.py')
-    has_toc = any(l.strip() == '@toc' for l in open(md, encoding='utf-8'))
-    toc_path = os.path.join(w, 'toc.json')
-    if has_toc:
-        heads = headings(md)
-        json.dump([[t, '٠٠', l] for t, l in heads], open(toc_path, 'w'), ensure_ascii=False)
-        for _ in range(2):  # converge page numbers
-            lo_pdf(ts, md, w + '/p.docx', w + '/p.pdf', [toc_path] + UTHMANI)
-            pg = find_pages(w + '/p.pdf', heads)
+    src = open(md, encoding='utf-8').read().split('\n')
+    has_toc = any(l.strip() == '@toc' for l in src)
+    has_index = any(indexes.directive(l) for l in src)
+    toc_path = os.path.join(w, 'toc.json'); pages_path = os.path.join(w, 'pages.json')
+    heads = headings(md)
+    def args(): return ([toc_path] if has_toc else []) + flags + ([f'--pages={pages_path}'] if has_index else [])
+    def measure(pdf):
+        """Read the pages the layout gave the headings and the index entries; True when they are what the file says."""
+        old = (open(toc_path).read() if has_toc else '', open(pages_path).read() if has_index else '')
+        if has_toc:
+            pg = find_pages(pdf, heads)
             json.dump([[t, str(p).translate(HINDI) if p else '؟', l] for (t, l), p in zip(heads, pg)], open(toc_path, 'w'), ensure_ascii=False)
-        missing = [t for (t, l), p in zip(heads, pg) if not p]
-        if missing: print('TOC: page not found for:', missing)
-    args = ([toc_path] if has_toc else []) + UTHMANI
-    subprocess.run(['python3', ts, md, out + '.docx', 'word'] + args, check=True)
-    lo_pdf(ts, md, w + '/f.docx', out + '.pdf', args)
+            measure.missing = [t for (t, l), p in zip(heads, pg) if not p]
+        if has_index: json.dump(dest_pages(pdf), open(pages_path, 'w'))
+        return old == (open(toc_path).read() if has_toc else '', open(pages_path).read() if has_index else '')
+    measure.missing = []
+    if has_toc: json.dump([[t, '٠٠', l] for t, l in heads], open(toc_path, 'w'), ensure_ascii=False)
+    if has_index: json.dump({}, open(pages_path, 'w'))
+    if has_toc or has_index:
+        for _ in range(2):  # converge page numbers
+            lo_pdf(ts, md, w + '/p.docx', w + '/p.pdf', args())
+            measure(w + '/p.pdf')
+    for _ in range(2):   # the final build; once more if its own layout moved a page number
+        r = subprocess.run(['python3', ts, md, out + '.docx', 'word'] + args(), capture_output=True, text=True)
+        if r.returncode: sys.exit(r.stderr.strip().splitlines()[-1] if r.stderr.strip() else 'typeset.py failed')
+        lo_pdf(ts, md, w + '/f.docx', out + '.pdf', args())
+        if not (has_toc or has_index) or measure(out + '.pdf'): break
+    print(r.stdout, end='')
+    if measure.missing: print('TOC: page not found for:', measure.missing)
     stray = stray_fonts(out + '.pdf')
     if stray:   # in Arabic: it goes into the reply to the user
         print('FONTS: حروف ليست في خطوط المهارة فرُسمت في PDF بخطٍّ آخر أو لم تُرسم: '

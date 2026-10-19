@@ -14,14 +14,18 @@
 | Footnote with an unbreakable word (a link) | aligned to the start, not justified; no hidden break points are added |
 | Latin footnote | mostly Latin letters → left to right, left aligned, Times New Roman, same hanging indent; its number is Western, «(1)», in the note's own Times, in Word and in every LibreOffice version |
 | Article title (first heading 1, no cover) | at the head of page 1, ~4 lines (96 pt) above, ~3 lines (72 pt) below, the text following on the same page; a writer line «>>» right under it sits one line below the title with one line after it |
-| Header | none (no running title at the top of pages, by design) |
+| Header | none by default. On request (`@header`): the title of the work, 13 pt, centred over a 0.5 pt rule, on every page but the first |
+| Body font on request | Traditional Arabic (`--font=traditional`), same sizes and measures; Latin and signs it lacks as with Lotus |
+| Opening basmala on request | one of Lotus Lotfi's seven basmalas (U+1EE00–U+1EE06), centred, about half the line wide, 18 pt after; one line above an article's title instead of four |
+| Indexes (on request) | each on a new page, heading 1; entries 16 pt with dot leaders to the page numbers at the far edge, as in the contents; grouped under a bold centred line (حرف …، قافية …، سورة …); verses by surah in the Mushaf's order with their ayah numbers small; names, places and words ordered without «ال»; the list of sources with a 1 cm hanging indent, Latin sources left to right |
+| Citation styles (on request) | Chicago (full note first, short after), APA and Harvard (author and year), MLA (author and short title); titles of whole works bold in Arabic, italic in Latin; article titles in «» (Arabic) or "" (Latin) |
 | Page number | bare number centered at the bottom, 14 pt, Hindi digits; in Word it is spelled out by nested fields so it never depends on the reader's settings |
 | Tables | full width, 0.75 pt black borders, header row #D9D9D9 bold, cells 14 pt; columns sized to content (no word breaks), a long last column takes the rest |
 | Cover | title 20 bold centered ~6 cm down; lines 16; «إعداد:» + author bold + affiliation; date low |
-| TOC | dot leaders, H1 bold, H2 indented 1 cm; it does not list itself. With a cover it has a page of its own; in an article with no cover it follows the title on page 1 and does not list the title, and the text starts on the next page |
+| TOC | dot leaders, H1 bold, H2 indented 1 cm; it does not list itself; it lists the indexes. At the end on request. With a cover it has a page of its own; in an article with no cover it follows the title on page 1 and does not list the title, and the text starts on the next page |
 | Latin | Times New Roman, 2 pt smaller than surrounding Arabic |
 | Signs Lotus lacks (U+FD00–U+FDFF: ﷻ ﷽ ﵁ …) | Noto Naskh Arabic, character by character, same size; the characters stay as written |
 | Digits | Hindi (١٢٣) — PDF via LibreOffice CTLTextNumerals=Context; Latin runs are marked English so their digits stay 123; in Word the automatic footnote numbers are decimal and follow Word's Numeral setting |
 | Fonts in the Word file | Lotus Lotfi is not embedded (its «preview & print» permission makes Word open the file read-only where the font is missing); the fonts are delivered in one zip, «خطوط-لملف-Word.zip» (the two Lotus files always; the Quran font whenever a verse was set in Uthmani script; Noto Naskh Arabic with its licence whenever a sign was set in it). The Quran font is also embedded when used |
 
-Rendering notes: Lotus Lotfi = Linotype Lotus modified by Lotfi El-Tokhi: conditional ligatures disabled when the first letter is voweled; Allah ligature from Shebli; marked alif maqsura (intentional); 239 Shebli ornament glyphs at U+1EE00–1EEF2 (not used in body — not searchable).
+Rendering notes: Lotus Lotfi = Linotype Lotus modified by Lotfi El-Tokhi: conditional ligatures disabled when the first letter is voweled; Allah ligature from Shebli; marked alif maqsura (intentional); 239 Shebli ornament glyphs at U+1EE00–1EEF2 (not used in body — not searchable; only the seven basmalas U+1EE00–1EE06 are used, for the opening basmala on request).

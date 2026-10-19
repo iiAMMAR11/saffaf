@@ -1,12 +1,15 @@
 import re, os, zipfile, uuid, unicodedata
-import quran
+import quran, indexes, cite
+from fonts import traditional_files
 from xml.sax.saxutils import escape
 
-FONT = "_Lotus Lotfi"
+LOTUS = "_Lotus Lotfi"
+FONT = LOTUS
 import os as _os
 HERE=_os.path.dirname(_os.path.abspath(__file__))
 REG = _os.path.join(HERE,"..","assets","fonts","_LotusLotfi-Regular.ttf")
 BOLD = _os.path.join(HERE,"..","assets","fonts","_LotusLotfi-Bold.ttf")
+
 RLM = "\u200f"
 TEXTW = 9072  # A4 width 11906 - 2*1417
 
@@ -15,6 +18,7 @@ W_NS = ('xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" 
 
 # ---------- inline markup ----------
 # **bold**   ⟦small⟧ (verse refs, death dates)   ⟪verse in Uthmani script⟫   ^N footnote   `latin`
+# ⟨italic⟩ (titles of Latin works in a citation style)   ⟮N⟯ a bookmark where an index entry stands (invisible)
 from fontTools.ttLib import TTFont
 CMAP = set(TTFont(REG).getBestCmap())
 FALLBACK = "Times New Roman"
@@ -22,7 +26,16 @@ FALLBACK = "Times New Roman"
 # are set in Noto Naskh Arabic (assets/symbols, SIL OFL), each character as the author wrote it.
 SYMBOL_FONT = "Noto Naskh Arabic"
 SYMBOL_FILE = _os.path.join(HERE,"..","assets","symbols","NotoNaskhArabic-Regular.ttf")
-SYMBOLS = {c for c in TTFont(SYMBOL_FILE).getBestCmap() if 0xFD00 <= c <= 0xFDFF} - CMAP
+SYMBOL_CMAP = {c for c in TTFont(SYMBOL_FILE).getBestCmap() if 0xFD00 <= c <= 0xFDFF}
+SYMBOLS = SYMBOL_CMAP - CMAP
+def use_font(kind):
+    """Set the body font: 'lotus' (the default) or 'traditional' (on request)."""
+    global FONT, REG, BOLD, CMAP, SYMBOLS
+    if kind != 'traditional': return
+    t = traditional_files()
+    if not t: raise SystemExit('Traditional Arabic was asked for, but its font files are not in assets/traditional')
+    FONT, REG, BOLD = t[0], t[1], t[2] or t[1]
+    CMAP = set(TTFont(REG).getBestCmap()); SYMBOLS = SYMBOL_CMAP - CMAP
 INVISIBLE = '\t\u200f\u200e\u200d\u200c\u2060\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069'
 def seg(part):
     # split into (text, font) segments: None = Lotus, SYMBOL_FONT, or FALLBACK for any other glyph Lotus lacks;
@@ -35,17 +48,24 @@ def seg(part):
         else: out.append((cur,curf)); cur=ch; curf=f
     if cur: out.append((cur,curf))
     return out
-TOK = re.compile(r'(\*\*|⟦|⟧|⟪|⟫|⟬|⟭|\^\d+|`[^`]*`)')
+# «**» marks bold only as a pair of asterisks on its own: a run of three or more (the «***» an author puts between the
+# two halves of a verse of poetry) is the author's text and stays as it is
+TOK = re.compile(r'((?<!\*)\*\*(?!\*)|⟦|⟧|⟪|⟫|⟬|⟭|⟨|⟩|⟮\d+⟯|\^\d+|`[^`]*`)')
+def bookmark(name, n):   # an empty, hidden bookmark (Word hides names that begin with «_»); the PDF names its place
+    return f'<w:bookmarkStart w:id="{n}" w:name="{name}"/><w:bookmarkEnd w:id="{n}"/>'
 footnotes = {}
 LTR_NOTES = set()   # footnotes written mostly in Latin letters: set left-to-right in Times
 RAGGED_NOTES = set()   # footnotes holding a word that cannot break (a link…): not justified, or the line before it is stretched
 UNBREAKABLE = re.compile(r'\S*://\S+|\bwww\.\S+|\S{30,}')
 
 def runs(text, base_bold=False, size=None, ltr_para=False):
-    out = []; bold = base_bold; small = False; verse = False; noproof = False
+    out = []; bold = base_bold; small = False; verse = False; noproof = False; italic = False
     for part in TOK.split(text):
         if not part: continue
         if part == '**': bold = not bold; continue
+        if part == '⟨': italic = True; continue
+        if part == '⟩': italic = False; continue
+        if part.startswith('⟮'): out.append(bookmark(f'_ix{part[1:-1]}', 1000 + int(part[1:-1]))); continue
         if part == '⟦': small = True; continue
         if part == '⟧': small = False; continue
         if part == '⟪': verse = True; continue
@@ -60,6 +80,7 @@ def runs(text, base_bold=False, size=None, ltr_para=False):
         if part.startswith('^'):
             n = int(part[1:])
             sup = '<w:rStyle w:val="FootnoteReference"/><w:rtl/>'
+            out.append(bookmark(f'_fn{n}', 500000 + n))   # the page of the note: index entries inside the note take it
             out.append(f'<w:r><w:rPr>{sup}</w:rPr><w:t>\u200f(\u200f</w:t></w:r>')
             out.append(f'<w:r><w:rPr>{sup}</w:rPr><w:footnoteReference w:id="{n}"/></w:r>')
             out.append(f'<w:r><w:rPr>{sup}</w:rPr><w:t>\u200f)\u200f</w:t></w:r>')
@@ -68,6 +89,7 @@ def runs(text, base_bold=False, size=None, ltr_para=False):
         if ltr: part = part[1:-1]
         rp = ''
         if bold: rp += '<w:b/><w:bCs/>'
+        if italic: rp += '<w:i/><w:iCs/>'
         if noproof: rp += '<w:noProof/>'
         sz = 21 if small else size
         if ltr: sz = (size or 32) - 4  # Latin a touch smaller, as in source
@@ -139,7 +161,7 @@ DEATH = re.compile(r'\((ت\s*:\s*)([٠-٩0-9]+(?:هـ|ه)?)\)')
 # Short references in () or [] that hold a number — (ت: ٤٦٨) (٢/ ٦٥٣) (١٢/٢٨٣) [البقرة: ١٤٣] — must never
 # split across lines. Glue them with invisible aids only: spaces become no-break spaces and a word joiner
 # goes between parts (never between two Arabic letters, so shaping is untouched). Visible text is unchanged.
-SHORTREF = re.compile(r'[\(\[][^()\[\]\n⟦⟧⟪⟫⟬⟭`^]{1,28}[\)\]]')
+SHORTREF = re.compile(r'[\(\[][^()\[\]\n⟦⟧⟪⟫⟬⟭⟮⟯⟨⟩`^]{1,28}[\)\]]')
 AR = re.compile(r'[\u0621-\u064A\u066E-\u06D3]')
 WJ, NBSP = '\u2060', '\u00a0'
 def glue(m):
@@ -165,21 +187,72 @@ REF = re.compile(r'\s*[\[(]\s*([^\[\]()\^:٠-٩0-9]+?)\s*(?::\s*([٠-٩0-9\-–�
 NAMED = re.compile(r'سورة\s+([^\s:،]+)(\s+[^\s:،]+)?\s*[:،]?\s*$')
 STANDALONE = re.compile(r'^\s*﴿[^﴿﴾]+﴾(?:\s*\[[^\[\]]*\])*[\s.،؛:]*$')   # a paragraph that is only a verse
 def bare(t): return ''.join(c for c in t if unicodedata.category(c) != 'Mn')
-def uthmani(m):
+# ---------- index entries ----------
+# Marks in in.md ({{علم|…}}, see indexes.py) leave the author's words in place and record an entry; in the text a
+# bookmark goes where the entry stands, and make.py reads its page from the PDF. An entry inside a footnote takes the
+# page of the note's reference (LibreOffice gives no page to a bookmark inside a note).
+IX = []            # dict(id, kind, text, entry, group, note, place)
+IX_WANT = set()    # the indexes asked for (@index lines)
+IX_UNPLACED = []   # verses the index of verses could not place: (verse, why) — reported, in Arabic
+IX_UNKNOWN = []    # marks of an unknown kind (their words are kept, the mark is dropped)
+CUR_NOTE = None    # the footnote being set
+IX_OFF = False     # True while the indexes themselves are set: nothing is recorded or converted then
+PAGES = {}         # bookmark name -> page (make.py)
+def take_marks(t):
+    def mk(m):
+        k = indexes.kind(m.group(1)); words = m.group(2)
+        if IX_OFF: return words
+        if k not in indexes.MARKABLE: IX_UNKNOWN.append(m.group(1).strip()); return words
+        n = len(IX) + 1
+        IX.append(dict(id=n, kind=k, text=words, entry=(m.group(3) or '').strip() or words.strip(),
+                       group=(m.group(4) or '').strip() or None, note=CUR_NOTE, place=None))
+        return words if CUR_NOTE else f'⟮{n}⟯{words}'
+    return indexes.MARK.sub(mk, t)
+
+# ---------- citation styles (on request): {{مرجع|id|place}} -> the citation in the chosen style ----------
+CITES = {}; CITE_STYLE = None; CITED = set()
+CITE = re.compile(r'\{\{\s*مرجع\s*\|([^{}|]+)(?:\|([^{}|]*))?\}\}')
+def expand_cites(t):
+    def f(m):
+        sid = m.group(1).strip()
+        if not CITE_STYLE: raise SystemExit(f'a citation {{{{مرجع|{sid}}}}} needs --cite=STYLE and --sources=FILE')
+        if sid not in CITES: raise SystemExit(f'citation of an unknown source id: {sid}')
+        first = sid not in CITED; CITED.add(sid)
+        t = cite.note(CITES[sid], m.group(2) or '', CITE_STYLE, first)
+        # a full stop closes the citation only where nothing of the author's follows it and it does not end in one
+        rest = m.string[m.end():].strip()
+        return t + ('.' if not rest and not re.search(r'[.!?؟]\s*$', t) else '')
+    return CITE.sub(f, t)
+
+def verse(m):
+    """What the author marked as a verse: set in Uthmani script when asked for, and entered in the index of verses."""
     global QURAN_USED
     op, v, cl = [g for g in m.groups() if g is not None]
     before = bare(m.string[:m.start()])
-    if op != '﴿' and not SAYS.search(before): return m.group(0)
+    if IX_OFF or (op != '﴿' and not SAYS.search(before)): return m.group(0)
     ref = None; r = REF.match(m.string, m.end()); n = NAMED.search(before)
     if r and (r.group(2) or quran.surah(r.group(1))): ref = (r.group(1), r.group(2))
     elif n: ref = next(((x, None) for x in (n.group(1) + (n.group(2) or ''), n.group(1)) if quran.surah(x)), None)
-    u = quran.convert(v, ref)
-    if u is None: return m.group(0)
-    QURAN_USED = True
-    # the marks around the verse are marked no-proof too: Word checks «﴿word» as one word across the run boundary
-    return '⟬' + op + '⟭' + v[:len(v) - len(v.lstrip())] + '⟪' + u + '⟫' + v[len(v.rstrip()):] + '⟬' + cl + '⟭'
+    out = m.group(0); u = None
+    if UTHMANI:
+        u = quran.convert(v, ref)
+        if u is not None:
+            QURAN_USED = True
+            # the marks around the verse are marked no-proof too: Word checks «﴿word» as one word across the run boundary
+            out = '⟬' + op + '⟭' + v[:len(v) - len(v.lstrip())] + '⟪' + u + '⟫' + v[len(v.rstrip()):] + '⟬' + cl + '⟭'
+    if 'آية' in IX_WANT:
+        hit, why = quran.place(v, ref)
+        if hit and not why:
+            k = len(IX) + 1
+            shown = '⟬﴿⟭⟪' + u + '⟫⟬﴾⟭' if u is not None else '﴿' + v.strip() + '﴾'
+            IX.append(dict(id=k, kind='آية', text=shown, entry=shown, group=None, note=CUR_NOTE, place=hit[:3]))
+            if not CUR_NOTE: out = f'⟮{k}⟯' + out
+        else: IX_UNPLACED.append((v.strip(), why))
+    return out
+uthmani = verse
 def inline(t, fnmap):
-    if UTHMANI: t = QUOTED.sub(uthmani, VERSE.sub(uthmani, t))
+    t = take_marks(expand_cites(t))
+    if UTHMANI or 'آية' in IX_WANT: t = QUOTED.sub(verse, VERSE.sub(verse, t))
     t = re.sub(r'\[\^([^\]]+)\]', lambda m: '^%d' % fnmap.setdefault(m.group(1), len(fnmap)+1), t)
     t = DEATH.sub(lambda m: '⟦(' + m.group(1) + m.group(2) + ')⟧', t)   # spacing kept exactly as written
     t = VREF.sub(r'⟦\1⟧', t)
@@ -199,7 +272,37 @@ def inline(t, fnmap):
 
 META = {}
 BREAK_BEFORE = set()   # indexes of the # / ## / ### headings that start a new page (set by make.py for the PDF only)
+HEADER = None          # the running header (@header), on request only
+BASMALA = None         # 1-7: the opening basmala set as one of Lotus Lotfi's basmalas (on request only)
+BASMALA_USED = False
+SORT_KEPT = []         # @sort blocks left in their order because the author numbered them
+def sort_blocks(body):
+    """@sort … @end: the author's lines in between (a list of sources) in alphabetical order, each line unchanged. A list
+    the author numbered keeps its order (renumbering would change the text)."""
+    out = []; block = None
+    for ln in body:
+        if ln.strip() == '@sort' and block is None: block = []; continue
+        if ln.strip() == '@end' and block is not None:
+            items = [l for l in block if l.strip()]
+            if any(re.match(r'^\s*[٠-٩0-9]+\s*[-–.)]', l) for l in items): SORT_KEPT.append(len(items)); out += block
+            else: out += sorted(items, key=lambda l: indexes.order(indexes.key(indexes.strip_marks(l.lstrip('-*> ')), True)))
+            block = None; continue
+        (block if block is not None else out).append(ln)
+    return out + (block or [])
+
+def basmala_par():
+    """The opening basmala as one of Lotus Lotfi's own basmalas, centred, sized to about half the line."""
+    global BASMALA_USED
+    BASMALA_USED = True
+    c = indexes.SHAPES[BASMALA - 1]; f = TTFont(_os.path.join(HERE, "..", "assets", "fonts", "_LotusLotfi-Regular.ttf"))
+    adv = f['hmtx'][f.getBestCmap()[c]][0] / f['head'].unitsPerEm
+    pt = max(18, min(48, round(230 / adv)))   # ~230 pt wide (the line is ~454 pt), never smaller than the text around it
+    fonts = f'<w:rFonts w:ascii="{LOTUS}" w:hAnsi="{LOTUS}" w:eastAsia="{LOTUS}" w:cs="{LOTUS}"/>'
+    return (f'<w:p><w:pPr><w:bidi/><w:spacing w:before="0" w:after="360"/><w:jc w:val="center"/></w:pPr>'
+            f'<w:r><w:rPr>{fonts}<w:noProof/><w:sz w:val="{2 * pt}"/><w:szCs w:val="{2 * pt}"/><w:rtl/></w:rPr><w:t>{chr(c)}</w:t></w:r></w:p>')
+
 def parse(path):
+    global HEADER, CUR_NOTE
     lines = open(path, encoding='utf-8').read().split('\n')
     B_ = []; fnmap = {}; fndefs = {}
     i = 0
@@ -216,7 +319,18 @@ def parse(path):
     for ln in lines[i:]:
         m = re.match(r'^\[\^([^\]]+)\]:\s*(.*)$', ln)
         if m: fndefs[m.group(1)] = m.group(2)
+        elif re.match(r'^@header\b', ln.strip()):   # the running header: the text given, or the title of the work
+            HEADER = ln.strip()[len('@header'):].strip() or True
         else: body.append(ln)
+    body = sort_blocks(body)
+    for ln in body:
+        k = indexes.directive(ln)
+        if k: IX_WANT.add(k)
+    if HEADER is True:
+        first = next((l for l in body if l.strip() and not l.startswith('@') and not indexes.is_basmala(l)), '')
+        HEADER = META.get('title') or (first[2:] if first.startswith('# ') else None)
+        if not HEADER: raise SystemExit('@header: the work has no title to put in the header; give the header text after @header')
+    if HEADER: HEADER = re.sub(r'\*\*|\[\^[^\]]+\]', '', indexes.strip_marks(HEADER)).strip()
     if META.get('title'):
         B_.append(P(inline(META['title'], fnmap), 'CoverTitle', before=3400))
         for k, l in enumerate(META.get('lines', [])):
@@ -261,8 +375,20 @@ def parse(path):
     # follow on, ~1.5 lines below the text before them — except the first one after the contents, which starts the text
     # on a new page.
     LINE = 480; started = False; after_title = False; nhead = 0; after_toc = False
-    nonblank = [l.rstrip() for l in body if l.strip()]
+    # the opening basmala (the first line of the text, before its title or its first paragraph) stands apart from the text
+    lead = next((k for k, l in enumerate(body) if l.strip()), None)
+    opening = lead if lead is not None and indexes.is_basmala(body[lead]) else None
+    topgap = 4 * LINE   # above an article's title: ~4 lines, or one line when the basmala stands above it
+    nonblank = [l.rstrip() for k, l in enumerate(body) if l.strip() and k != opening]
     cover_open = bool(META.get('title'))
+    # contents placed after the text (at the end, with the indexes) start a page of their own in an article too
+    toc_late = False; titled = False
+    for l in body:
+        t = l.strip()
+        if t == '@toc': break
+        if not t or t.startswith(('@', '>> ')) or indexes.is_basmala(t): continue
+        if t.startswith('# ') and not titled: titled = True; continue
+        toc_late = True; break
     for ln in body:
         s_ = ln.rstrip()
         # the cover stands on its own page: the text after it starts a new one even when it does not open with a level-1
@@ -273,10 +399,19 @@ def parse(path):
         if s_.startswith('|'): tbl.append(s_); continue
         flush()
         if not s_.strip(): continue
+        if opening is not None and s_ == body[opening].rstrip():
+            opening = None; topgap = LINE
+            if BASMALA: B_.append(basmala_par()); continue
+            if not META.get('title'):   # left as written: a centred line of its own, and the title after it keeps its place
+                B_.append(P(inline(s_.lstrip('> ').strip() if s_.startswith('>> ') else s_, fnmap), jc='center', bold=s_.startswith('>> '), after=0)); continue
+        k = indexes.directive(s_)
+        if k:   # an index: its own heading, on a new page, then its entries (set in build)
+            brk = '<w:pageBreakBefore/>' if nhead in BREAK_BEFORE else ''; nhead += 1
+            B_.append(P(indexes.KINDS[k], 'Heading1', extra=brk)); B_.append(f'INDEX_PLACEHOLDER:{k}'); started = True; continue
         if not s_.startswith(('# ', '>> ')): started = True; after_title = False
         if s_.strip() == '@toc':
             # with a cover the contents have a page of their own; an article's contents follow its title on page 1
-            B_.append(H1('فهرس الموضوعات') if META.get('title') else P('فهرس الموضوعات', 'Heading1', before=3 * LINE // 2, extra='<w:pageBreakBefore w:val="0"/>'))
+            B_.append(H1('فهرس الموضوعات') if META.get('title') or toc_late else P('فهرس الموضوعات', 'Heading1', before=3 * LINE // 2, extra='<w:pageBreakBefore w:val="0"/>'))
             B_.append('TOC_PLACEHOLDER'); after_toc = True; continue
         if s_.strip() == '@pagebreak': B_.append('<w:p><w:r><w:br w:type="page"/></w:r></w:p>'); continue
         if s_.startswith(('### ', '## ', '# ')):
@@ -289,7 +424,8 @@ def parse(path):
         if s_.startswith('# '):
             if not started and not META.get('title'):
                 byline = len(nonblank) > 1 and nonblank[1].startswith('>> ')
-                B_.append(P(inline(s_[2:], fnmap), 'Heading1', before=4 * LINE, after=LINE if byline else 3 * LINE)); after_title = byline
+                B_.append(P(inline(s_[2:], fnmap), 'Heading1', before=topgap, after=LINE if byline else 3 * LINE,
+                           extra='' if topgap == 4 * LINE else '<w:pageBreakBefore w:val="0"/>')); after_title = byline
             elif META.get('title') or after_toc: B_.append(H1(inline(s_[2:], fnmap)))
             else: B_.append(P(inline(s_[2:], fnmap), 'Heading1', before=3 * LINE // 2, extra=brk or '<w:pageBreakBefore w:val="0"/>'))
             started = True; after_toc = False; continue
@@ -304,25 +440,95 @@ def parse(path):
         else: B_.append(P(inline(s_, fnmap), ind='<w:ind w:firstLine="567"/>', after=0))
     flush()
     for label, n in fnmap.items():
-        raw = fndefs.get(label, '[حاشية مفقودة]')
+        CUR_NOTE = n
+        raw = take_marks(expand_cites(fndefs.get(label, '[حاشية مفقودة]')))
         if UNBREAKABLE.search(raw): RAGGED_NOTES.add(n)
         if len(re.findall(r'[A-Za-z]', raw)) > len(AR.findall(raw)):
             # mostly Latin: the whole note runs left to right in Times; any Arabic words in it keep Lotus
             LTR_NOTES.add(n)
             # (the Arabic signs of U+FB50–U+FEFF, ﷺ ﷻ ﴿ ﴾, count as Arabic here: Times has none of them)
-            A_ = '\u0600-\u06FF\uFB50-\uFDFF\uFE70-\uFEFF'
-            footnotes[n] = ''.join(c if re.match(f'[{A_}]', c) else '`' + c + '`' for c in re.split(f'([{A_}](?:[{A_}\\s]*[{A_}])?)', raw.replace('`', '')) if c)
+            footnotes[n] = ltr_text(raw)
         else: footnotes[n] = inline(raw, {})
+    CUR_NOTE = None
     return B_
+
+def ltr_text(raw):
+    """A text written mostly in Latin letters, for a left-to-right paragraph: its Arabic words keep Lotus, the rest is
+    Latin (Times); bold and italic marks stay marks."""
+    A_ = '\u0600-\u06FF\uFB50-\uFDFF\uFE70-\uFEFF'
+    out = ''
+    for piece in re.split(r'((?<!\*)\*\*(?!\*)|⟨|⟩)', raw.replace('`', '')):
+        if piece in ('**', '⟨', '⟩'): out += piece; continue
+        out += ''.join(c if re.match(f'[{A_}]', c) else '`' + c + '`' for c in re.split(f'([{A_}](?:[{A_}\\s]*[{A_}])?)', piece) if c)
+    return out
+
+# ================= INDEXES =================
+HINDI = str.maketrans('0123456789', '٠١٢٣٤٥٦٧٨٩')
+def pages_of(es):
+    """The pages of a merged entry, «٣، ١٢»; ٠٠ before the first layout, ؟ for an entry whose page was not found."""
+    ps = sorted({PAGES.get(f'_fn{e["note"]}' if e['note'] else f'_ix{e["id"]}') for e in es} - {None})
+    if not PAGES: return '٠٠'
+    return '، '.join(str(p) for p in ps).translate(HINDI) if ps else '؟'
+
+def entry_line(text, pages, ind=''):
+    tabs = f'<w:tabs><w:tab w:val="right" w:leader="dot" w:pos="{TEXTW}"/></w:tabs>'
+    return P(f'{text}\t{pages}', jc="right", after=40, ind=ind, extra=tabs)
+
+def group_head(t):
+    return P(t, jc='center', bold=True, before=200, after=80, extra='<w:keepNext/>')
+
+def index_body(k):
+    """The entries of one index, grouped and in order."""
+    global IX_OFF
+    IX_OFF = True
+    out = []
+    try:
+        if k == 'مصدر':   # the list of sources, in the chosen citation style
+            if not CITES: raise SystemExit('@index مصدر needs a citation style (--cite) and its sources file (--sources)')
+            for src in sorted(CITES.values(), key=lambda x: indexes.order(indexes.key(cite.sort_name(x), True))):
+                t = cite.bib(src, CITE_STYLE)
+                if cite.arabic(src): out.append(P(inline(t, {}), ind='<w:ind w:left="567" w:hanging="567"/>', after=60))
+                else: out.append('<w:p><w:pPr><w:bidi w:val="0"/><w:spacing w:after="60"/><w:ind w:left="567" w:hanging="567"/><w:jc w:val="left"/></w:pPr>'
+                                 + runs(ltr_text(t), ltr_para=True) + '</w:p>')
+            return ''.join(out)
+        es = [e for e in IX if e['kind'] == k]
+        if k == 'آية':   # by surah, in the Mushaf's order; each verse with its ayah numbers
+            merged = {}
+            for e in es: merged.setdefault(e['place'], []).append(e)
+            last = None
+            for (sura, a, b), group in sorted(merged.items()):
+                if sura != last: out.append(group_head('سورة ' + quran.SURAHS[sura - 1].replace('\u00a0', ' '))); last = sura
+                num = (f'{a}' + (f'-{b}' if b != a else '')).translate(HINDI)
+                out.append(entry_line(group[0]['text'] + f' ⟦[{num}]⟧', pages_of(group)))
+            return ''.join(out)
+        merged = {}
+        for e in es:
+            clean = re.sub(r'\[\^[^\]]+\]', '', e['entry']).strip()
+            merged.setdefault(indexes.key(clean), (clean, []))[1].append(e)
+        drop = k in indexes.DROP_AL
+        def group(clean, group_es):
+            if k == 'شعر': return next((e['group'] for e in group_es if e['group']), None) or indexes.rhyme(group_es[0]['text'])
+            return next((e['group'] for e in group_es if e['group']), None) or indexes.letter(indexes.key(clean, drop))
+        rows = sorted(merged.values(), key=lambda r: (indexes.order(indexes.key(group(*r) or '')) if k == 'شعر' else [], indexes.order(indexes.key(r[0], drop))))
+        last = 0
+        for clean, group_es in rows:
+            g = group(clean, group_es)
+            if g != last:
+                name = indexes.NAMES.get((g or '').translate(indexes.FOLD), g or '')
+                out.append(group_head(('قافية ' if k == 'شعر' else 'حرف ') + name)); last = g
+            out.append(entry_line(inline(clean, {}), pages_of(group_es)))
+        return ''.join(out)
+    finally:
+        IX_OFF = False
 
 # ================= PACKAGE =================
 def build(toc_entries, out):
-    body = ''.join(toc(toc_entries) if b == 'TOC_PLACEHOLDER' else b for b in B)
+    body = ''.join(toc(toc_entries) if b == 'TOC_PLACEHOLDER' else index_body(b.split(':', 1)[1]) if b.startswith('INDEX_PLACEHOLDER:') else b for b in B)
     sect = ('<w:sectPr><w:headerReference w:type="default" r:id="rIdH1"/><w:headerReference w:type="first" r:id="rIdH2"/>'
             '<w:footerReference w:type="default" r:id="rIdF1"/><w:footerReference w:type="first" r:id="rIdF2"/>'
             '<w:footnotePr><w:numFmt w:val="decimal"/><w:numRestart w:val="eachPage"/></w:footnotePr>'
             '<w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1417" w:right="1417" w:bottom="1417" w:left="1417" w:header="709" w:footer="567" w:gutter="0"/>'
-            '<w:pgNumType w:fmt="decimal"/><w:cols w:space="708"/>' + ('<w:titlePg/>' if META.get('title') else '') + '<w:bidi/></w:sectPr>')
+            '<w:pgNumType w:fmt="decimal"/><w:cols w:space="708"/>' + ('<w:titlePg/>' if META.get('title') or HEADER else '') + '<w:bidi/></w:sectPr>')
     doc = f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document {W_NS}><w:body>{body}{sect}</w:body></w:document>'
 
     rpr_def = f'<w:rFonts w:ascii="{FONT}" w:hAnsi="{FONT}" w:eastAsia="{FONT}" w:cs="{FONT}"/><w:sz w:val="32"/><w:szCs w:val="32"/><w:lang w:val="ar-SA" w:eastAsia="en-US" w:bidi="ar-SA"/>'
@@ -342,6 +548,7 @@ def build(toc_entries, out):
 {st('FootnoteText','footnote text','<w:spacing w:after="0" w:line="240" w:lineRule="auto"/><w:ind w:left="340" w:hanging="340"/><w:jc w:val="both"/>', '<w:sz w:val="26"/><w:szCs w:val="26"/>')}
 {st('FootnoteReference','footnote reference', rpr='<w:vertAlign w:val="superscript"/>', typ='character', based='DefaultParagraphFont')}
 {st('Footer','footer','<w:spacing w:after="0"/><w:jc w:val="center"/>', '<w:sz w:val="28"/><w:szCs w:val="28"/>')}
+{st('Header','header','<w:pBdr><w:bottom w:val="single" w:sz="4" w:space="4" w:color="000000"/></w:pBdr><w:spacing w:after="0"/><w:jc w:val="center"/>', '<w:sz w:val="26"/><w:szCs w:val="26"/>')}
 </w:styles>'''
 
     numbering = f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering {W_NS}>
@@ -370,7 +577,8 @@ def build(toc_entries, out):
         '<w:footnote w:type="continuationSeparator" w:id="0"><w:p><w:pPr><w:bidi/><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:continuationSeparator/></w:r></w:p></w:footnote>'
         f'{fns}</w:footnotes>')
 
-    # no running header, by design; the header parts stay empty
+    # the running header is on request only (@header): the title of the work, centred over a thin rule, on every page
+    # but the first (the cover, or an article's own title); otherwise the header parts stay empty
     empty_h = f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:hdr {W_NS}><w:p><w:pPr><w:bidi/></w:pPr></w:p></w:hdr>'
     empty_f = f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:ftr {W_NS}><w:p><w:pPr><w:bidi/></w:pPr></w:p></w:ftr>'
     r = '<w:rPr><w:rtl/></w:rPr>'; MC = 'http://schemas.openxmlformats.org/markup-compatibility/2006'
@@ -394,6 +602,10 @@ def build(toc_entries, out):
     else:
         number = fld([' PAGE '], '٢')   # LibreOffice (the PDF) shows it in Arabic-Indic digits by itself
     ftr1 = f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:ftr {W_NS}><w:p><w:pPr><w:pStyle w:val="Footer"/><w:bidi/></w:pPr>{number}</w:p></w:ftr>'
+    hdr1 = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:hdr {W_NS}><w:p><w:pPr><w:pStyle w:val="Header"/><w:bidi/></w:pPr>'
+            f'{runs(inline(HEADER, {}), size=26)}</w:p></w:hdr>') if HEADER else None
+    # with no cover, the first page still shows its number when it has no header (an article's first page)
+    ftr2 = ftr1 if HEADER and not META.get('title') else None
 
     settings = f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:settings {W_NS}>
 {'<w:embedTrueTypeFonts/>' if QURAN_USED else ''}<w:defaultTabStop w:val="720"/><w:characterSpacingControl w:val="doNotCompress"/>
@@ -417,6 +629,7 @@ def build(toc_entries, out):
     qrel = '<Relationship Id="rIdFont1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/font" Target="fonts/font1.odttf"/>' if QURAN_USED else ''
     fonttable = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:fonts {W_NS}>'
         f'<w:font w:name="{FONT}"><w:charset w:val="B2"/><w:family w:val="roman"/><w:pitch w:val="variable"/></w:font>{qfont}'
+        + (f'<w:font w:name="{LOTUS}"><w:charset w:val="B2"/><w:family w:val="roman"/><w:pitch w:val="variable"/></w:font>' if FONT != LOTUS and BASMALA_USED else '') +
         f'<w:font w:name="{FALLBACK}"><w:charset w:val="00"/><w:family w:val="roman"/><w:pitch w:val="variable"/></w:font>'
         '<w:font w:name="Courier New"><w:charset w:val="00"/><w:family w:val="modern"/><w:pitch w:val="fixed"/></w:font></w:fonts>')
     fonttable_rels = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' + qrel + '</Relationships>')
@@ -448,22 +661,41 @@ def build(toc_entries, out):
         z.writestr('word/styles.xml', styles); z.writestr('word/settings.xml', settings); z.writestr('word/numbering.xml', numbering)
         z.writestr('word/footnotes.xml', footnotes_xml); z.writestr('word/fontTable.xml', fonttable); z.writestr('word/_rels/fontTable.xml.rels', fonttable_rels)
         if QURAN_USED: z.writestr('word/fonts/font1.odttf', obf(quran.FONT_FILE, g1))
-        z.writestr('word/header1.xml', empty_h); z.writestr('word/header2.xml', empty_h)
-        z.writestr('word/footer1.xml', ftr1); z.writestr('word/footer2.xml', empty_f)
+        z.writestr('word/header1.xml', hdr1 or empty_h); z.writestr('word/header2.xml', empty_h)
+        z.writestr('word/footer1.xml', ftr1); z.writestr('word/footer2.xml', ftr2 or empty_f)
 
 
 import sys, json
 if __name__ == '__main__':
-    # usage: typeset.py input.md out.docx variant(word|lo) [toc.json] [--uthmani] [--break-before=N,N]
+    # usage: typeset.py input.md out.docx variant(word|lo) [toc.json] [--uthmani] [--break-before=N,N] [--font=traditional]
+    #        [--basmala=N] [--cite=STYLE --sources=FILE] [--pages=FILE]
+    opt = lambda name: next((a.split('=', 1)[1] for a in sys.argv if a.startswith(f'--{name}=')), None)
     UTHMANI = '--uthmani' in sys.argv
-    BREAK_BEFORE = {int(x) for a in sys.argv if a.startswith('--break-before=') for x in a.split('=')[1].split(',') if x}
-    argv = [a for a in sys.argv if a != '--uthmani' and not a.startswith('--break-before=')]
+    BREAK_BEFORE = {int(x) for x in (opt('break-before') or '').split(',') if x}
+    use_font(opt('font') or 'lotus')
+    BASMALA = int(opt('basmala')) if opt('basmala') else None
+    if BASMALA is not None and not 1 <= BASMALA <= len(indexes.SHAPES): raise SystemExit(f'--basmala: 1 to {len(indexes.SHAPES)}')
+    CITE_STYLE = (opt('cite') or '').lower() or None
+    if CITE_STYLE and CITE_STYLE not in cite.STYLES: raise SystemExit('--cite: ' + ' | '.join(cite.STYLES))
+    if CITE_STYLE: CITES = cite.load(opt('sources')) if opt('sources') else {}
+    if opt('pages') and os.path.exists(opt('pages')): PAGES = json.load(open(opt('pages')))
+    argv = [a for a in sys.argv if not a.startswith('--')]
     VARIANT = argv[3]
     B = parse(argv[1])
     toc_entries = json.load(open(argv[4])) if len(argv) > 4 else []
     build(toc_entries, argv[2])
-    if UTHMANI and VARIANT == 'word':   # one report per build, in Arabic: it goes into the reply to the user as it is
-        kept = [r for r in quran.REPORT if not r[0]]
-        print(f'QURAN: عدد الآيات المحوَّلة إلى الرسم العثماني: {len(quran.REPORT) - len(kept)}، وعدد ما بقي كما كتبه الكاتب: {len(kept)}'.translate(quran.HINDI))
-        for done, verse, note in kept:
-            print('QURAN بقيت كما كُتبت: ﴿' + (verse if len(verse) < 60 else verse[:57] + '…') + '﴾ — ' + note)
+    if VARIANT == 'word':   # the reports, once per build; the QURAN and INDEX lines are in Arabic: they go into the reply as they are
+        if UTHMANI:
+            kept = [r for r in quran.REPORT if not r[0]]
+            print(f'QURAN: عدد الآيات المحوَّلة إلى الرسم العثماني: {len(quran.REPORT) - len(kept)}، وعدد ما بقي كما كتبه الكاتب: {len(kept)}'.translate(quran.HINDI))
+            for done, verse_, note in kept:
+                print('QURAN بقيت كما كُتبت: ﴿' + (verse_ if len(verse_) < 60 else verse_[:57] + '…') + '﴾ — ' + note)
+        for verse_, why in IX_UNPLACED:
+            print('INDEX لم تدخل فهرس الآيات: ﴿' + (verse_ if len(verse_) < 60 else verse_[:57] + '…') + '﴾ — ' + why)
+        for k in sorted(IX_WANT - {'آية', 'مصدر'}):
+            if not any(e['kind'] == k for e in IX): print(f'INDEX: no entry was marked for {k} — its index is empty')
+        if IX_UNKNOWN: print('INDEX: unknown kind of mark (its words kept, the mark dropped): ' + ', '.join(sorted(set(IX_UNKNOWN))))
+        if SORT_KEPT: print('SORT: a list the author numbered was left in its order (renumbering would change the text)')
+        if CITE_STYLE:
+            for line in cite.report({k: v for k, v in CITES.items() if k in CITED}, CITE_STYLE): print(line)
+        if BASMALA and not BASMALA_USED: print('BASMALA: the text does not open with the basmala — nothing was set')
