@@ -6,7 +6,8 @@ Every option is on request only — the user chose it:
   --uthmani              verses in Uthmani script
   --font=traditional     the body in Traditional Arabic instead of Lotus Lotfi
   --basmala=N            the opening basmala set as Lotus Lotfi's basmala number N (1-7)
-  --cite=STYLE --sources=FILE   citations in chicago | apa | harvard | mla, from the sources file (see cite.py)"""
+  --cite=STYLE --sources=FILE   citations in chicago | apa | harvard | mla | ieee, from the sources file (see cite.py)
+  --profile=kku          a thesis set by the King Khalid University guide (Traditional Arabic, its pages and measures)"""
 import os, sys, re, json, shutil, subprocess, tempfile, zipfile, unicodedata
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -98,6 +99,11 @@ def patch_odt(src, dst, labels=None):
                     if not pm or not tm or 'style:writing-mode="lr-tb"' not in pm.group(1) or '<style:text-properties' in pm.group(1): continue
                     props = re.sub(r'\s(fo:font-style|style:font-style-asian|style:font-style-complex|fo:font-weight|style:font-weight-asian|style:font-weight-complex)="[^"]*"', '', tm.group(1))
                     t = t[:pm.end(1)] + f'<style:text-properties{props}/>' + t[pm.end(1):]
+            if it.filename == 'content.xml':
+                # LibreOffice gives a page reference the page's number, not its letter: the prelims of a thesis are numbered
+                # in letters, so their references keep the letter the file stores (read from the PDF of the pass before)
+                # (LibreOffice's letters write the fifth as a bare «ه», Word's as «هـ»: each program's contents match its own footer)
+                t = re.sub(r'<text:bookmark-ref\b[^>]*text:ref-name="_pre\d+"[^>]*>(.*?)</text:bookmark-ref>', lambda m: m.group(1).replace('هـ', 'ه'), t)
             if it.filename == 'content.xml' and labels:
                 # LibreOffice's own count went wrong: write each number in by hand. The note's own label becomes one word
                 # joiner (no width, no break: the lines are set as before; a bidi mark there shifts the note's first line
@@ -159,7 +165,7 @@ def to_pdf(docx, pdf):
     d = tempfile.mkdtemp()
     # LibreOffice lays the document out while reading it, and can loop there (see patch_odt): a stall switches the rest
     # of the build to a copy it reads without space shrinking
-    if NO_SHRINK or not lo(['--convert-to', 'odt', '--outdir', d, docx], limit=150):
+    if NO_SHRINK or not lo(['--convert-to', 'odt', '--outdir', d, docx], limit=60):
         NO_SHRINK = True
         lo(['--convert-to', 'odt', '--outdir', d, word14(docx, tempfile.mkdtemp())])
     odt = os.path.join(d, os.path.basename(docx)[:-5] + '.odt')
@@ -171,7 +177,7 @@ def to_pdf(docx, pdf):
     labels = None
     for _ in range(3):
         patch_odt(odt + '.lo', odt, labels)
-        if not lo(['--convert-to', 'pdf', '--outdir', d, odt], limit=600 if NO_SHRINK else 150):
+        if not lo(['--convert-to', 'pdf', '--outdir', d, odt], limit=600 if NO_SHRINK else 60):
             NO_SHRINK = True   # it stalled: once more without space shrinking, for the rest of this build
             patch_odt(odt + '.lo', odt, labels); lo(['--convert-to', 'pdf', '--outdir', d, odt])
         refs = note_refs(odt[:-4] + '.pdf')
@@ -201,7 +207,7 @@ def dest_pages(pdf):
         for name, d in dests.items():
             name = name.decode() if isinstance(name, bytes) else str(name)
             name = re.sub(r'^5F', '_', name)   # LibreOffice writes the «_» of a bookmark's name as its hex code
-            if not re.match(r'^_(ix|fn|toc)\d+$', name): continue
+            if not re.match(r'^_(ix|fn|toc|pre|sec|cap)\d+$', name): continue
             d = resolve1(d); d = resolve1(d['D']) if isinstance(d, dict) else d
             pg = at.get(getattr(d[0], 'objid', None)) if isinstance(d, list) and d else None
             if pg: out[name] = pg
@@ -243,7 +249,7 @@ def heading_rows(pdf):
             for c in p.chars: rows.setdefault(round(c['top']), []).append(c)
             rows = sorted(rows.items())
             bold = lambda cs: norm(''.join(c['text'] for c in sorted(cs, key=lambda c: -c['x0']) if 'Bold' in c['fontname']))
-            cut = next((k for k, (top, cs) in enumerate(rows) if bold(cs) == norm('فهرس الموضوعات')), None)
+            cut = next((k for k, (top, cs) in enumerate(rows) if bold(cs) in (norm('فهرس الموضوعات'), norm('قائمة المحتويات'))), None)
             leaders = any(sum(c['text'] == '.' for c in cs) >= 10 for top, cs in rows)
             if cut is not None: rows = rows[:cut]; inside = True
             elif inside and leaders: rows = []
@@ -381,7 +387,8 @@ if __name__ == '__main__':
     md, out = [a for a in sys.argv[1:] if not a.startswith('--')][:2]
     opt = lambda name: next((a.split('=', 1)[1] for a in flags if a.startswith(f'--{name}=')), None)
     if opt('sources'): flags = [f'--sources={os.path.abspath(opt("sources"))}' if a.startswith('--sources=') else a for a in flags]
-    if opt('font') == 'traditional':
+    if opt('profile') == 'kku' and not opt('font'): flags.append('--font=traditional')   # the guide's font
+    if opt('font') == 'traditional' or opt('profile') == 'kku':
         from fonts import traditional_files
         TRAD = traditional_files()
         if not TRAD: sys.exit('Traditional Arabic was asked for, but its font files are not in assets/traditional')

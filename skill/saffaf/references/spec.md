@@ -29,3 +29,24 @@
 | Fonts in the Word file | Lotus Lotfi is not embedded (its «preview & print» permission makes Word open the file read-only where the font is missing); the fonts are delivered in one zip, «خطوط-لملف-Word.zip» (the two Lotus files always; the Quran font whenever a verse was set in Uthmani script; Noto Naskh Arabic with its licence whenever a sign was set in it). The Quran font is also embedded when used |
 
 Rendering notes: Lotus Lotfi = Linotype Lotus modified by Lotfi El-Tokhi: conditional ligatures disabled when the first letter is voweled; Allah ligature from Shebli; marked alif maqsura (intentional); 239 Shebli ornament glyphs at U+1EE00–1EEF2 (not used in body — not searchable; only the seven basmalas U+1EE00–1EE06 are used, for the opening basmala on request).
+
+## Thesis profile (`--profile=kku`, the King Khalid University guide)
+Every value below is the guide's; what it leaves to the department (citation style, indexes) stays a panel choice.
+
+| Element | Value |
+|---|---|
+| Font | Traditional Arabic throughout; Latin in Times New Roman |
+| Page | A4; margins top 2.5, bottom 2.5, left 2.5, right 3.5 cm (binding) |
+| Body | 16 pt, 1.5 lines, justified, 1 cm first-line indent |
+| Headings | heading 1: 20 bold centred, a new page; heading 2: 18 bold |
+| Footnotes | as in the paper style (the guide leaves them to the department), numbered again on every page |
+| Header | the title on request (`@header`), without the rule |
+| Title page (model 1) | the kingdom, ministry, university, college and department lines at the top right; the logo (the user's image, 4 × 4 cm at most) at the top left; the title 20 bold about 11 cm down (PT Bold Heading in the guide, Traditional Arabic bold until that font is supplied); the degree statement, the author, the supervisor and the date below, at the guide's heights |
+| Approval page (model 3) | the same top lines and logo; the title; «إجازة الرسالة»; the committee in a table (name, role, signature) at about 21 cm |
+| Basmala page | one of Lotus Lotfi's seven basmalas, about 11 cm down |
+| Page numbers | title, approval and basmala pages: none; prelims: letters from «ب» (أبجد); text: 1, 2, 3 … from the introduction; a part's page («الباب …»): no header, no number |
+| Contents | «قائمة المحتويات», listing itself, the prelims with their letters, then the text, references, appendices and indexes |
+| Lists of tables and figures | «قائمة الجداول» / «قائمة الأشكال»: every caption «جدول (١-١): …» / «شكل (١-١): …» with its page |
+| Abstracts and acknowledgements | Arabic abstract and acknowledgements 14 pt, the abstract single-spaced; the English abstract left to right in Times; an abstract over 300 words or acknowledgements over a page are reported |
+| References | a 1 cm hanging indent; Latin references left to right |
+| Appendices | after the references; before each one a page «ملحق رقم (n)» with its title; the indexes after the appendices |

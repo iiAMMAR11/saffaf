@@ -14,7 +14,9 @@ RLM = "\u200f"
 TEXTW = 9072  # A4 width 11906 - 2*1417
 
 W_NS = ('xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
-        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"')
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
+        'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"')
+MARGIN_RIGHT = 1417   # the thesis profile: 3.5 cm on the right (the binding side of an Arabic thesis)
 
 # ---------- inline markup ----------
 # **bold**   ⟦small⟧ (verse refs, death dates)   ⟪verse in Uthmani script⟫   ^N footnote   `latin`
@@ -103,14 +105,15 @@ def runs(text, base_bold=False, size=None, ltr_para=False):
             out.append(f'<w:r><w:rPr>{fb}{rp}</w:rPr><w:t xml:space="preserve">{escape(txt)}</w:t></w:r>')
     return ''.join(out)
 
-def P(text='', style=None, jc=None, before=None, after=None, ind=None, numid=None, lvl=0, bold=False, size=None, extra=''):
+def P(text='', style=None, jc=None, before=None, after=None, ind=None, numid=None, lvl=0, bold=False, size=None, extra='', line=None):
     pp = ''
     if style: pp += f'<w:pStyle w:val="{style}"/>'
     if numid: pp += f'<w:numPr><w:ilvl w:val="{lvl}"/><w:numId w:val="{numid}"/></w:numPr>'
     pp += extra
     pp += '<w:bidi/>'
-    if before is not None or after is not None:
-        pp += '<w:spacing' + (f' w:before="{before}"' if before is not None else '') + (f' w:after="{after}"' if after is not None else '') + '/>'
+    if before is not None or after is not None or line:
+        pp += ('<w:spacing' + (f' w:before="{before}"' if before is not None else '') + (f' w:after="{after}"' if after is not None else '')
+               + (f' w:line="{line}" w:lineRule="auto"' if line else '') + '/>')
     if ind: pp += ind
     if jc: pp += f'<w:jc w:val="{jc}"/>'
     return f'<w:p><w:pPr>{pp}</w:pPr>{runs(text, bold, size)}</w:p>'
@@ -162,6 +165,8 @@ def pageref(name, cached, bold=False):
 
 def page_cached(name):
     if not PAGES: return '٠٠'
+    if name.startswith('_pre') and name in PAGES and '_sec1' in PAGES:   # a prelims page: its letter (the first one is ب)
+        return abjad(PAGES[name] - PAGES['_sec1'] + 2)
     return str(PAGES[name]).translate(HINDI) if name in PAGES else '؟'
 
 def numbered_line(text, refs, ind='', bold=False):
@@ -174,16 +179,17 @@ def numbered_line(text, refs, ind='', bold=False):
 
 def toc(entries=None):
     out = []
-    for t, lvl, k in TOC_ENTRIES:
+    for t, lvl, name in TOC_ENTRIES:
         ind = '<w:ind w:left="567"/>' if lvl == 2 else ''   # the start side (see the note on hanging indents above)
-        out.append(numbered_line(t, [f'_toc{k}'], ind=ind, bold=(lvl == 1)))
+        out.append(numbered_line(t, [name], ind=ind, bold=(lvl == 1)))
     return ''.join(out)
 
 def toc_head(par, text, lvl):
     """A heading the contents list: it gets a bookmark the contents' page number refers to."""
     k = len(TOC_ENTRIES) + 1
-    TOC_ENTRIES.append((re.sub(r'\*\*|\[\^[^\]]+\]', '', indexes.strip_marks(text)).strip(), lvl, k))
-    return with_bookmark(par, f'_toc{k}', 900000 + k)
+    name = f'_pre{k}' if PROFILE == 'kku' and SECT in ('front', 'prelims') else f'_toc{k}'   # the prelims are numbered in letters
+    TOC_ENTRIES.append((re.sub(r'\*\*|\[\^[^\]]+\]', '', indexes.strip_marks(text)).strip(), lvl, name))
+    return with_bookmark(par, name, 900000 + k)
 
 
 # ================= PARSER (markdown-ish input) =================
@@ -242,7 +248,7 @@ def take_marks(t):
     return indexes.MARK.sub(mk, t)
 
 # ---------- citation styles (on request): {{مرجع|id|place}} -> the citation in the chosen style ----------
-CITES = {}; CITE_STYLE = None; CITED = set()
+CITES = {}; CITE_STYLE = None; CITED = set(); CITE_ORDER = []
 CITE = re.compile(r'\{\{\s*مرجع\s*\|([^{}|]+)(?:\|([^{}|]*))?\}\}')
 def expand_cites(t):
     def f(m):
@@ -250,7 +256,8 @@ def expand_cites(t):
         if not CITE_STYLE: raise SystemExit(f'a citation {{{{مرجع|{sid}}}}} needs --cite=STYLE and --sources=FILE')
         if sid not in CITES: raise SystemExit(f'citation of an unknown source id: {sid}')
         first = sid not in CITED; CITED.add(sid)
-        t = cite.note(CITES[sid], m.group(2) or '', CITE_STYLE, first)
+        if first: CITE_ORDER.append(sid)
+        t = cite.note(CITES[sid], m.group(2) or '', CITE_STYLE, first, CITE_ORDER.index(sid) + 1)
         # a full stop closes the citation only where nothing of the author's follows it and it does not end in one
         rest = m.string[m.end():].strip()
         return t + ('.' if not rest and not re.search(r'[.!?؟]\s*$', t) else '')
@@ -333,8 +340,138 @@ def basmala_par():
     return (f'<w:p><w:pPr><w:bidi/><w:spacing w:before="0" w:after="360"/><w:jc w:val="center"/></w:pPr>'
             f'<w:r><w:rPr>{fonts}<w:noProof/><w:sz w:val="{2 * pt}"/><w:szCs w:val="{2 * pt}"/><w:rtl/></w:rPr><w:t>{chr(c)}</w:t></w:r></w:p>')
 
+# ================= THESIS (the King Khalid University guide) =================
+# «دليل كتابة الرسائل العلمية وإخراجها»، الإصدار الثاني ١٤٤٣هـ (docs/kku-guide-review.md). Chosen with --profile=kku; the
+# guide decides everything it states for a thesis: Traditional Arabic 16 with 1.5 lines, headings 20 and 18, margins 3.5 cm
+# on the right and 2.5 cm elsewhere, the title page, the approval page and the basmala page of its models, the prelims
+# numbered in letters (ب، ج…) and the text from ١, a page of its own before each part (باب) and each appendix, and the
+# lists of tables and figures. The fixed wording of its pages is the guide's own; every detail of the student's comes
+# from the student, never invented.
+PROFILE = 'paper'
+SECT = 'front'          # the section being written: front (title, approval, basmala), prelims, text
+THESIS_NOTES = []       # in Arabic, for the reply
+CAPS = []               # captions of tables and figures: (kind, text, number)
+LOGO = None             # (bytes, extension, width EMU, height EMU)
+ABJAD = ['أ', 'ب', 'ج', 'د', 'هـ', 'و', 'ز', 'ح', 'ط', 'ي', 'ك', 'ل', 'م', 'ن', 'س', 'ع', 'ف', 'ص', 'ق', 'ر', 'ش', 'ت', 'ث', 'خ', 'ذ', 'ض', 'ظ', 'غ']
+def abjad(n): return ABJAD[n - 1] if 1 <= n <= len(ABJAD) else str(n).translate(HINDI)
+def title_key(t):
+    return re.sub(r'[^\u0621-\u064Aa-z]', '', indexes.bare(indexes.strip_marks(t)).lower().translate(str.maketrans('أإآة', 'اااه')))
+PRELIM = {title_key(x): k for x, k in (
+    ('الإهداء', 'other'), ('إهداء', 'other'), ('الشكر والتقدير', 'ack'), ('شكر وتقدير', 'ack'), ('الشكر', 'ack'), ('شكر وعرفان', 'ack'),
+    ('المستخلص', 'abs_ar'), ('مستخلص الرسالة', 'abs_ar'), ('ملخص الرسالة', 'abs_ar'), ('الملخص', 'abs_ar'), ('المستخلص باللغة العربية', 'abs_ar'),
+    ('مستخلص الرسالة باللغة العربية', 'abs_ar'), ('Abstract', 'abs_en'), ('المستخلص باللغة الإنجليزية', 'abs_en'), ('مستخلص الرسالة باللغة الإنجليزية', 'abs_en'),
+    ('قائمة الرموز والمصطلحات', 'other'), ('قائمة الرموز', 'other'), ('قائمة المصطلحات', 'other'))}
+REFS = re.compile(r'المراجع|المصادر|References|Bibliography')
+CAPTION = re.compile(r'^(?:>>\s*)?(?:\*\*)?\s*(جدول|الجدول|شكل|الشكل)\s*(?:رقم)?\s*\(?\s*[٠-٩0-9]+(?:\s*[-–.]\s*[٠-٩0-9]+)?\s*\)?\s*[:：\-–]')
+EMU = 360000   # per cm
+
+def frame_lines(lines, ycm, size, width=None, xalign='center', bold=True):
+    """Lines set at a fixed place on the page (cm from the top edge), as the guide's models measure them; a block that
+    wraps to more lines does not move the next one."""
+    w = width or TEXTW
+    fp = f'<w:framePr w:w="{w}" w:hSpace="0" w:wrap="notBeside" w:vAnchor="page" w:hAnchor="margin" w:xAlign="{xalign}" w:y="{int(ycm * 567)}"/>'
+    sp = f'<w:spacing w:before="0" w:after="0" w:line="{size * 15}" w:lineRule="exact"/>'
+    return ''.join(f'<w:p><w:pPr>{fp}<w:bidi/>{sp}<w:jc w:val="center"/></w:pPr>{runs(inline(t, {}), bold, size)}</w:p>' for t in lines)
+
+def logo_run(ycm):
+    """The university's logo, 4 × 4 cm at most, at the left of the text area, ycm from the top (the user's own image)."""
+    if not LOGO: return ''
+    data, ext, cx, cy = LOGO
+    return (f'<w:r><w:drawing><wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="1" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1">'
+            f'<wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="page"><wp:posOffset>{int(2.5 * EMU)}</wp:posOffset></wp:positionH>'
+            f'<wp:positionV relativeFrom="page"><wp:posOffset>{int(ycm * EMU)}</wp:posOffset></wp:positionV><wp:extent cx="{cx}" cy="{cy}"/>'
+            f'<wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapNone/><wp:docPr id="{int(ycm * 10)}" name="logo"/><wp:cNvGraphicFramePr/>'
+            '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">'
+            '<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="1" name="logo"/><pic:cNvPicPr/></pic:nvPicPr>'
+            f'<pic:blipFill><a:blip r:embed="rIdLogo"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm>'
+            '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r>')
+
+def load_logo(path):
+    """-> (bytes, extension, cx, cy) fitted into 4 × 4 cm with its own proportions (PNG or JPEG)."""
+    import struct
+    data = open(path, 'rb').read()
+    if data[:8] == b'\x89PNG\r\n\x1a\n': w, h = struct.unpack('>II', data[16:24]); ext = 'png'
+    elif data[:2] == b'\xff\xd8':
+        i = 2; w = h = None
+        while i < len(data) - 9:
+            if data[i] != 0xFF: i += 1; continue
+            marker, seglen = data[i + 1], struct.unpack('>H', data[i + 2:i + 4])[0]
+            if marker in (0xC0, 0xC1, 0xC2): h, w = struct.unpack('>HH', data[i + 5:i + 9]); break
+            i += 2 + seglen
+        ext = 'jpeg'
+        if not w: raise SystemExit('logo: could not read the size of the JPEG image')
+    else: raise SystemExit('logo: a PNG or JPEG image is needed')
+    k = 4 * EMU / max(w, h)
+    return data, ext, int(w * k), int(h * k)
+
+def fixed(k, prefix):
+    """A detail of the student's, with the guide's word before it when the student wrote it without («كلية …»)."""
+    v = META.get(k, '').strip()
+    return v if not v or v.startswith(prefix) else f'{prefix} {v}'
+
+def thesis_front(body):
+    """The title page (model 1), the approval page (model 3, when asked for) and the basmala page (when asked for)."""
+    m = META; out = []
+    missing = [n for k, n in (('title', 'عنوان الرسالة'), ('college', 'الكلية'), ('department', 'القسم'), ('degree', 'الدرجة'), ('field', 'التخصص'),
+                              ('author', 'اسم الطالب'), ('supervisor', 'اسم المشرف ولقبه'), ('date', 'تاريخ المناقشة')) if not m.get(k)]
+    if missing: THESIS_NOTES.append('THESIS: لم يصلني من بيانات صفحة العنوان: ' + '، '.join(missing))
+    if not LOGO: THESIS_NOTES.append('THESIS: لم يصلني شعار الجامعة، فتُرك مكانه في صفحة العنوان وصفحة الإجازة فارغًا')
+    THESIS_NOTES.append('THESIS: عنوان الرسالة بخط Traditional Arabic عريض ٢٠، لأن خط PT Bold Heading الذي يسمّيه الدليل ليس في المهارة')
+    head = ['المملكة العربية السعودية', 'وزارة التعليم', 'جامعة الملك خالد'] + [x for x in (fixed('college', 'كلية'), fixed('department', 'قسم')) if x]
+    statement = (f'قُدمت هذه الرسالة استكمالاً لمتطلبات الحصول على درجة {m["degree"]}' + (f' في {m["field"]}' if m.get('field') else '')) if m.get('degree') else ''
+    out.append(frame_lines(head, 3, 32, width=TEXTW // 2, xalign='right'))
+    # the logo hangs on an ordinary paragraph of the page (LibreOffice drops a picture anchored in a placed paragraph)
+    out.append(f'<w:p><w:pPr><w:bidi/><w:spacing w:before="0" w:after="0"/></w:pPr>{logo_run(3)}</w:p>' if LOGO else '')
+    out.append(frame_lines([m['title']] if m.get('title') else [], 11, 40))
+    out.append(frame_lines([statement] if statement else [], 15, 32))
+    out.append(frame_lines([m['author']] if m.get('author') else [], 18, 40))
+    out.append(frame_lines([m['supervisor']] if m.get('supervisor') else [], 21, 40))
+    out.append(frame_lines([m['date']] if m.get('date') else [], 26, 28))
+    if any(l.strip() == '@approval' for l in body):
+        out.append(PAGEBREAK)
+        head2 = ['جامعة الملك خالد'] + [x for x in (fixed('college', 'كلية'), fixed('department', 'قسم'),
+                                                       f'التخصص: {m["field"]}' if m.get('field') else '', f'الدرجة العلمية: {m["degree"]}' if m.get('degree') else '') if x]
+        out.append(frame_lines(head2, 2, 32, width=TEXTW // 2, xalign='right'))
+        out.append(f'<w:p><w:pPr><w:bidi/><w:spacing w:before="0" w:after="0"/></w:pPr>{logo_run(2)}</w:p>' if LOGO else '')
+        out.append(frame_lines([m['title']] if m.get('title') else [], 10, 40))
+        out.append(frame_lines([m['author']] if m.get('author') else [], 15, 32))
+        out.append(frame_lines(['إجازة أعضاء لجنة المناقشة والحكم للرسالة بعد إجراء التعديلات المطلوبة (إن وُجدت)',
+                                'التاريخ:      /      /      ١٤هـ   –      /      /      ٢٠م'], 17, 32))
+        out.append(frame_lines(['أعضاء لجنة المناقشة والحكم'], 20, 32))
+        names = [x.split('|')[0].strip() for x in m.get('members', [])]
+        roles = ['مشرف ومقرر', 'مناقش أول/ داخلي', 'مناقش ثاني/', 'مناقش ثالث/', 'مناقش رابع/']
+        rows = [['**الاسم**', '**صفة المشاركة**', '**التوقيع**']] + [[names[i] if i < len(names) else '', r, ''] for i, r in enumerate(roles)]
+        w3 = [TEXTW * 2 // 5, TEXTW * 3 // 10, TEXTW - TEXTW * 2 // 5 - TEXTW * 3 // 10]
+        tbl = table([[inline(c, {}) for c in r] for r in rows], w3)
+        out.append(tbl.replace('<w:tblPr>', f'<w:tblPr><w:tblpPr w:leftFromText="0" w:rightFromText="0" w:vertAnchor="page" w:horzAnchor="margin" w:tblpXSpec="center" w:tblpY="{int(21.2 * 567)}"/>', 1))
+        out.append(P('', after=0))
+    if any(l.strip() == '@basmala' for l in body):
+        out.append(PAGEBREAK)
+        if not BASMALA: THESIS_NOTES.append('THESIS: صفحة البسملة تحتاج رقم شكلها (١–٧)')
+        else:
+            c = indexes.SHAPES[BASMALA - 1]; f = TTFont(_os.path.join(HERE, "..", "assets", "fonts", "_LotusLotfi-Regular.ttf"))
+            adv = f['hmtx'][f.getBestCmap()[c]][0] / f['head'].unitsPerEm
+            pt = max(28, min(110, round(330 / adv)))   # «بخط كبير، ومميز، وسط الصفحة»: about 11.5 cm wide
+            fonts = f'<w:rFonts w:ascii="{LOTUS}" w:hAnsi="{LOTUS}" w:eastAsia="{LOTUS}" w:cs="{LOTUS}"/>'
+            fp = f'<w:framePr w:w="{TEXTW}" w:hSpace="0" w:wrap="notBeside" w:vAnchor="page" w:hAnchor="margin" w:xAlign="center" w:y="{int(11 * 567)}"/>'
+            out.append(f'<w:p><w:pPr>{fp}<w:bidi/><w:spacing w:before="0" w:after="0"/><w:jc w:val="center"/></w:pPr>'
+                       f'<w:r><w:rPr>{fonts}<w:noProof/><w:sz w:val="{2 * pt}"/><w:szCs w:val="{2 * pt}"/><w:rtl/></w:rPr><w:t>{chr(c)}</w:t></w:r></w:p>')
+            global BASMALA_USED
+            BASMALA_USED = True
+        out.append(P('', after=0))
+    else:
+        out.append(P('', after=0))
+    return out
+
+PAGEBREAK = '<w:p><w:r><w:br w:type="page"/></w:r></w:p>'
+def separator(lines, sizes):
+    """A page with only these lines, in the middle of the page (a part's title, an appendix's number and title)."""
+    out = [P(t, 'Heading1' if k == 0 else None, jc='center', bold=True, size=sz, before=4800 if k == 0 else 120, after=0,
+             extra='' if k == 0 else '<w:keepNext/>') for k, (t, sz) in enumerate(zip(lines, sizes))]
+    return out
+
 def parse(path):
-    global HEADER, CUR_NOTE
+    global HEADER, CUR_NOTE, SECT
     lines = open(path, encoding='utf-8').read().split('\n')
     B_ = []; fnmap = {}; fndefs = {}
     i = 0
@@ -344,6 +481,7 @@ def parse(path):
             k, _, v = lines[i].partition(':')
             k = k.strip(); v = v.strip()
             if k == 'line': META['lines'].append(v)
+            elif k == 'member': META.setdefault('members', []).append(v)
             elif k: META[k] = v
             i += 1
         i += 1
@@ -363,7 +501,14 @@ def parse(path):
         HEADER = META.get('title') or (first[2:] if first.startswith('# ') else None)
         if not HEADER: raise SystemExit('@header: the work has no title to put in the header; give the header text after @header')
     if HEADER: HEADER = re.sub(r'\*\*|\[\^[^\]]+\]', '', indexes.strip_marks(HEADER)).strip()
-    if META.get('title'):
+    if PROFILE == 'kku':
+        global LOGO
+        if META.get('logo'):
+            lp = META['logo'] if os.path.isabs(META['logo']) else os.path.join(os.path.dirname(os.path.abspath(path)), META['logo'])
+            LOGO = load_logo(lp)
+        B_.extend(thesis_front(body))
+        body = [l for l in body if l.strip() not in ('@approval', '@basmala')]
+    elif META.get('title'):
         B_.append(P(inline(META['title'], fnmap), 'CoverTitle', before=3400))
         for k, l in enumerate(META.get('lines', [])):
             B_.append(P(inline(l, fnmap), jc='center', before=240 if k == 0 else None, after=40))
@@ -412,7 +557,15 @@ def parse(path):
     opening = lead if lead is not None and indexes.is_basmala(body[lead]) else None
     topgap = 4 * LINE   # above an article's title: ~4 lines, or one line when the basmala stands above it
     nonblank = [l.rstrip() for k, l in enumerate(body) if l.strip() and k != opening]
-    cover_open = bool(META.get('title'))
+    cover_open = bool(META.get('title')) and PROFILE != 'kku'
+    kind = None        # the kind of the thesis section being set (acknowledgements, abstract, references…)
+    napp = 0           # appendices so far
+    def enter(k):      # a new section of the thesis: the Word file and the PDF start a page with its own numbering
+        global SECT
+        B_.append(f'SECT:{k}'); SECT = 'prelims' if k == 'prelims' else 'text'
+    def is_prelim(line):
+        t = line.strip()
+        return t in ('@toc', '@figures', '@tables') or (t.startswith('# ') and title_key(t[2:]) in PRELIM)
     # contents placed after the text (at the end, with the indexes) start a page of their own in an article too
     toc_late = False; titled = False
     for l in body:
@@ -431,8 +584,29 @@ def parse(path):
         if s_.startswith('|'): tbl.append(s_); continue
         flush()
         if not s_.strip(): continue
+        if PROFILE == 'kku':
+            t_ = s_.strip()
+            if SECT == 'front' and not indexes.directive(t_) and t_ not in ('@pagebreak',) and not (opening is not None and s_ == body[opening].rstrip()):
+                enter('prelims' if is_prelim(s_) else 'text')
+            elif SECT == 'prelims' and t_.startswith('# ') and not is_prelim(s_):
+                enter('text')
+            if t_.startswith('# '):
+                h = t_[2:]
+                kind = PRELIM.get(title_key(h)) or ('refs' if REFS.search(indexes.bare(h)) else None)
+                if SECT == 'text' and indexes.bare(h).startswith('الباب'):   # a part: its title alone on a page, no number shown
+                    enter('bab')
+                    B_.append(toc_head(separator([inline(h, fnmap)], [40])[0], h, 1)); B_.append(PAGEBREAK)
+                    nhead += 1; started = True; continue
+            if t_ in ('@figures', '@tables'):
+                cap = 'figure' if t_ == '@figures' else 'table'; ttl = 'قائمة الأشكال' if cap == 'figure' else 'قائمة الجداول'
+                B_.append(toc_head(H1(ttl), ttl, 1)); B_.append(f'CAPLIST:{cap}'); kind = None; continue
+            if t_.startswith('@appendix'):
+                napp += 1; ttl = t_[len('@appendix'):].strip(); num = f'ملحق رقم ({str(napp).translate(HINDI)})'
+                sep = separator([num] + ([inline(ttl, fnmap)] if ttl else []), [40, 36])
+                B_.append(toc_head(sep[0], num + (f': {ttl}' if ttl else ''), 2)); B_.extend(sep[1:]); B_.append(PAGEBREAK); continue
         if opening is not None and s_ == body[opening].rstrip():
             opening = None; topgap = LINE
+            if PROFILE == 'kku' and BASMALA_USED: continue   # set on its own page already
             if BASMALA: B_.append(basmala_par()); continue
             if not META.get('title'):   # left as written: a centred line of its own, and the title after it keeps its place
                 B_.append(P(inline(s_.lstrip('> ').strip() if s_.startswith('>> ') else s_, fnmap), jc='center', bold=s_.startswith('>> '), after=0)); continue
@@ -443,6 +617,8 @@ def parse(path):
         if not s_.startswith(('# ', '>> ')): started = True; after_title = False
         if s_.strip() == '@toc':
             # with a cover the contents have a page of their own; an article's contents follow its title on page 1
+            if PROFILE == 'kku':   # the guide's name; it lists the prelims and itself
+                B_.append(toc_head(H1('قائمة المحتويات'), 'قائمة المحتويات', 1)); B_.append('TOC_PLACEHOLDER'); after_toc = True; kind = None; continue
             B_.append(H1('فهرس الموضوعات') if META.get('title') or toc_late else P('فهرس الموضوعات', 'Heading1', before=3 * LINE // 2, extra='<w:pageBreakBefore w:val="0"/>'))
             B_.append('TOC_PLACEHOLDER'); after_toc = True; continue
         if s_.strip() == '@pagebreak': B_.append('<w:p><w:r><w:br w:type="page"/></w:r></w:p>'); continue
@@ -466,7 +642,22 @@ def parse(path):
         if s_.startswith('- '): B_.append(bullet(inline(s_[2:], fnmap), lvl=0, bold=False)); continue
         m = re.match(r'^([٠-٩0-9]+)\s*([-–.)])\s+(.*)$', s_)
         if m: B_.append(item(m.group(1), inline(m.group(3), fnmap), m.group(2))); continue
+        if PROFILE == 'kku' and CAPTION.match(s_):   # a table's or a figure's caption, as the author wrote it: its list refers here
+            text = s_[3:] if s_.startswith('>> ') else s_
+            CAPS.append(('figure' if 'شكل' in CAPTION.match(s_).group(1) else 'table', re.sub(r'\*\*', '', indexes.strip_marks(text)).strip(), len(CAPS) + 1))
+            par = P(inline(text, fnmap), jc='center', bold=s_.startswith('>> '), after=0, extra='<w:keepNext/>')
+            B_.append(with_bookmark(par, f'_cap{len(CAPS)}', 800000 + len(CAPS))); continue
         if s_.startswith('>> '): B_.append(P(inline(s_[3:], fnmap), jc='center', bold=True, after=LINE if after_title else None)); after_title = False; started = True; continue
+        if PROFILE == 'kku' and kind in ('ack', 'abs_ar'):   # the guide: 14 pt; the abstract with single spacing
+            B_.append(P(inline(s_, fnmap), ind='<w:ind w:firstLine="567"/>', after=0, size=28, line=240 if kind == 'abs_ar' else None)); continue
+        if PROFILE == 'kku' and kind == 'abs_en' or PROFILE == 'kku' and kind == 'refs' and len(re.findall(r'[A-Za-z]', s_)) > len(AR.findall(s_)):
+            # English: left to right in Times New Roman (the abstract 12 pt with single spacing, a foreign reference 14 pt)
+            ind = '<w:ind w:firstLine="567"/>' if kind == 'abs_en' else '<w:ind w:left="567" w:hanging="567"/>'
+            B_.append(f'<w:p><w:pPr><w:bidi w:val="0"/><w:spacing w:after="{0 if kind == "abs_en" else 60}"' + (' w:line="240" w:lineRule="auto"' if kind == 'abs_en' else '')
+                      + f'/>{ind}<w:jc w:val="{"both" if kind == "abs_en" else "left"}"/></w:pPr>' + runs(ltr_text(take_marks(expand_cites(s_))), size=28 if kind == 'abs_en' else 32, ltr_para=True) + '</w:p>')
+            continue
+        if PROFILE == 'kku' and kind == 'refs':   # each reference with its later lines hanging
+            B_.append(P(inline(s_, fnmap), ind='<w:ind w:left="567" w:hanging="567"/>', after=60)); continue
         # ordinary paragraphs: 1 cm first-line indent, no space after; a paragraph that is only a verse is centred instead
         if STANDALONE.match(s_): B_.append(P(inline(s_, fnmap), jc='center'))
         else: B_.append(P(inline(s_, fnmap), ind='<w:ind w:firstLine="567"/>', after=0))
@@ -520,8 +711,12 @@ def index_body(k):
     try:
         if k == 'مصدر':   # the list of sources, in the chosen citation style
             if not CITES: raise SystemExit('@index مصدر needs a citation style (--cite) and its sources file (--sources)')
-            for src in sorted(CITES.values(), key=lambda x: indexes.order(indexes.key(cite.sort_name(x), True))):
-                t = cite.bib(src, CITE_STYLE)
+            if CITE_STYLE == 'ieee':   # numbered in the order of first citation
+                listed = [(CITES[k], n + 1) for n, k in enumerate(CITE_ORDER)]
+            else:
+                listed = [(x, None) for x in sorted(CITES.values(), key=lambda x: indexes.order(indexes.key(cite.sort_name(x), True)))]
+            for src, num in listed:
+                t = cite.bib(src, CITE_STYLE, num)
                 if cite.arabic(src): out.append(P(inline(t, {}), ind='<w:ind w:left="567" w:hanging="567"/>', after=60))
                 else: out.append('<w:p><w:pPr><w:bidi w:val="0"/><w:spacing w:after="60"/><w:ind w:left="567" w:hanging="567"/><w:jc w:val="left"/></w:pPr>'
                                  + runs(ltr_text(t), ltr_para=True) + '</w:p>')
@@ -557,14 +752,60 @@ def index_body(k):
         IX_OFF = False
 
 # ================= PACKAGE =================
+def caplist(kind):
+    es = [(t, n) for k, t, n in CAPS if k == kind]
+    if not es: THESIS_NOTES.append('THESIS: ' + ('قائمة الأشكال' if kind == 'figure' else 'قائمة الجداول') + ' فارغة: لم أجد في النص عنوانًا يبدأ بـ«' + ('شكل' if kind == 'figure' else 'جدول') + ' (١-١):» ونحوه')
+    return ''.join(numbered_line(t, [f'_cap{n}']) for t, n in es)
+
+def section(kind):
+    """The settings of a section of the thesis: front (no number), prelims (letters from ب), text (from ١), a part (its
+    first page, the part's title, shows neither header nor number)."""
+    refs = ''
+    if kind != 'front':
+        refs = (('<w:headerReference w:type="default" r:id="rIdH1"/>' + ('<w:headerReference w:type="first" r:id="rIdH2"/>' if kind == 'bab' else ''))
+                + f'<w:footerReference w:type="default" r:id="{"rIdF3" if kind == "prelims" else "rIdF1"}"/>'
+                + ('<w:footerReference w:type="first" r:id="rIdF2"/>' if kind == 'bab' else ''))
+    num = {'prelims': '<w:pgNumType w:fmt="arabicAbjad" w:start="2"/>', 'text': '<w:pgNumType w:fmt="decimal" w:start="1"/>'}.get(kind, '<w:pgNumType w:fmt="decimal"/>')
+    return (f'<w:sectPr>{refs}<w:footnotePr><w:numFmt w:val="decimal"/><w:numRestart w:val="eachPage"/></w:footnotePr>'
+            f'<w:type w:val="nextPage"/><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1417" w:right="{MARGIN_RIGHT}" w:bottom="1417" w:left="1417" w:header="709" w:footer="567" w:gutter="0"/>'
+            f'{num}<w:cols w:space="708"/>' + ('<w:titlePg/>' if kind == 'bab' else '') + '<w:bidi/></w:sectPr>')
+
+def join_sections(parts):
+    """The body with its sections: each SECT marker closes the section before it (its settings go into the last
+    paragraph of that section) and opens the next; the prelims' first paragraph carries a bookmark for its page."""
+    out = []; cur = 'front'; mark = None
+    for b in parts:
+        if b.startswith('SECT:'):
+            k = len(out) - 1
+            while k >= 0 and not out[k].startswith('<w:p>'): k -= 1
+            last = out[k] if k >= 0 else '<w:p><w:pPr><w:bidi/></w:pPr></w:p>'
+            j = last.rfind('<w:p>')   # the last paragraph of a block of several (the contents, a list…)
+            tail = last[j:]
+            if not tail.startswith('<w:p><w:pPr>'): tail = tail.replace('<w:p>', '<w:p><w:pPr></w:pPr>', 1)
+            i = tail.index('</w:pPr>'); last = last[:j] + tail[:i] + section(cur) + tail[i:]
+            if k >= 0: out[k] = last
+            else: out.insert(0, last)
+            cur = b[5:]; mark = '_sec1' if cur == 'prelims' else None
+            continue
+        if mark and b.startswith('<w:p>'): b = with_bookmark(b, mark, 799999) if '<w:pPr>' in b else b; mark = None
+        out.append(b)
+    return ''.join(out), section(cur)
+
 def build(toc_entries, out):
-    body = ''.join(toc(toc_entries) if b == 'TOC_PLACEHOLDER' else index_body(b.split(':', 1)[1]) if b.startswith('INDEX_PLACEHOLDER:') else b for b in B)
+    parts = [toc(toc_entries) if b == 'TOC_PLACEHOLDER' else index_body(b.split(':', 1)[1]) if b.startswith('INDEX_PLACEHOLDER:')
+             else caplist(b.split(':', 1)[1]) if b.startswith('CAPLIST:') else b for b in B]
+    if PROFILE == 'kku':
+        body, last_sect = join_sections(parts)
+    else:
+        body = ''.join(parts)
     sect = ('<w:sectPr><w:headerReference w:type="default" r:id="rIdH1"/><w:headerReference w:type="first" r:id="rIdH2"/>'
             '<w:footerReference w:type="default" r:id="rIdF1"/><w:footerReference w:type="first" r:id="rIdF2"/>'
             '<w:footnotePr><w:numFmt w:val="decimal"/><w:numRestart w:val="eachPage"/></w:footnotePr>'
             '<w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1417" w:right="1417" w:bottom="1417" w:left="1417" w:header="709" w:footer="567" w:gutter="0"/>'
             '<w:pgNumType w:fmt="decimal"/><w:cols w:space="708"/>' + ('<w:titlePg/>' if META.get('title') or HEADER else '') + '<w:bidi/></w:sectPr>')
+    if PROFILE == 'kku': sect = last_sect
     doc = f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document {W_NS}><w:body>{body}{sect}</w:body></w:document>'
+    K = PROFILE == 'kku'   # the guide: 1.5 lines, chapter headings 20 pt, sub-headings 18 pt, the header without a rule
 
     rpr_def = f'<w:rFonts w:ascii="{FONT}" w:hAnsi="{FONT}" w:eastAsia="{FONT}" w:cs="{FONT}"/><w:sz w:val="32"/><w:szCs w:val="32"/><w:lang w:val="ar-SA" w:eastAsia="en-US" w:bidi="ar-SA"/>'
     def st(sid, name, ppr='', rpr='', typ='paragraph', based='Normal', extra=''):
@@ -573,17 +814,17 @@ def build(toc_entries, out):
     BLD = '<w:b/><w:bCs/>'
     styles = f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles {W_NS}>
 <w:docDefaults><w:rPrDefault><w:rPr>{rpr_def}</w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:bidi/><w:spacing w:after="120" w:line="240" w:lineRule="auto"/><w:jc w:val="both"/></w:pPr></w:pPrDefault></w:docDefaults>
-<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/><w:pPr><w:bidi/><w:jc w:val="both"/></w:pPr><w:rPr><w:rtl/></w:rPr></w:style>
+<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/><w:pPr><w:bidi/>{'<w:spacing w:line="360" w:lineRule="auto"/>' if K else ''}<w:jc w:val="both"/></w:pPr><w:rPr><w:rtl/></w:rPr></w:style>
 <w:style w:type="character" w:default="1" w:styleId="DefaultParagraphFont"><w:name w:val="Default Paragraph Font"/><w:uiPriority w:val="1"/><w:semiHidden/></w:style>
-{st('Heading1','heading 1','<w:keepNext/><w:pageBreakBefore/><w:spacing w:before="0" w:after="360"/><w:jc w:val="center"/><w:outlineLvl w:val="0"/>', BLD+'<w:sz w:val="36"/><w:szCs w:val="36"/>', extra='<w:next w:val="Normal"/>')}
-{st('Heading2','heading 2','<w:keepNext/><w:spacing w:before="240" w:after="0"/><w:jc w:val="both"/><w:outlineLvl w:val="1"/>', BLD, extra='<w:next w:val="Normal"/>')}
+{st('Heading1','heading 1','<w:keepNext/><w:pageBreakBefore/><w:spacing w:before="0" w:after="360"/><w:jc w:val="center"/><w:outlineLvl w:val="0"/>', BLD+('<w:sz w:val="40"/><w:szCs w:val="40"/>' if K else '<w:sz w:val="36"/><w:szCs w:val="36"/>'), extra='<w:next w:val="Normal"/>')}
+{st('Heading2','heading 2','<w:keepNext/><w:spacing w:before="240" w:after="0"/><w:jc w:val="both"/><w:outlineLvl w:val="1"/>', BLD + ('<w:sz w:val="36"/><w:szCs w:val="36"/>' if K else ''), extra='<w:next w:val="Normal"/>')}
 {st('RunHead','Run-in Head','<w:keepNext/><w:spacing w:before="120" w:after="60"/>', BLD)}
 {st('CoverTitle','Cover Title','<w:spacing w:after="240"/><w:jc w:val="center"/>', BLD+'<w:sz w:val="40"/><w:szCs w:val="40"/>')}
-{st('TableText','Table Text','<w:spacing w:before="20" w:after="20"/>', '<w:sz w:val="28"/><w:szCs w:val="28"/>')}
+{st('TableText','Table Text','<w:spacing w:before="20" w:after="20" w:line="240" w:lineRule="auto"/>', '<w:sz w:val="28"/><w:szCs w:val="28"/>')}
 {st('FootnoteText','footnote text','<w:spacing w:after="0" w:line="240" w:lineRule="auto"/><w:ind w:left="340" w:hanging="340"/><w:jc w:val="both"/>', '<w:sz w:val="26"/><w:szCs w:val="26"/>')}
 {st('FootnoteReference','footnote reference', rpr='<w:vertAlign w:val="superscript"/>', typ='character', based='DefaultParagraphFont')}
-{st('Footer','footer','<w:spacing w:after="0"/><w:jc w:val="center"/>', '<w:sz w:val="28"/><w:szCs w:val="28"/>')}
-{st('Header','header','<w:pBdr><w:bottom w:val="single" w:sz="4" w:space="4" w:color="000000"/></w:pBdr><w:spacing w:after="0"/><w:jc w:val="center"/>', '<w:sz w:val="26"/><w:szCs w:val="26"/>')}
+{st('Footer','footer','<w:spacing w:after="0" w:line="240" w:lineRule="auto"/><w:jc w:val="center"/>', '<w:sz w:val="28"/><w:szCs w:val="28"/>')}
+{st('Header','header',('' if K else '<w:pBdr><w:bottom w:val="single" w:sz="4" w:space="4" w:color="000000"/></w:pBdr>') + '<w:spacing w:after="0" w:line="240" w:lineRule="auto"/><w:jc w:val="center"/>', '<w:sz w:val="26"/><w:szCs w:val="26"/>')}
 </w:styles>'''
 
     numbering = f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering {W_NS}>
@@ -640,7 +881,9 @@ def build(toc_entries, out):
     hdr1 = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:hdr {W_NS}><w:p><w:pPr><w:pStyle w:val="Header"/><w:bidi/></w:pPr>'
             f'{runs(inline(HEADER, {}), size=26)}</w:p></w:hdr>') if HEADER else None
     # with no cover, the first page still shows its number when it has no header (an article's first page)
-    ftr2 = ftr1 if HEADER and not META.get('title') else None
+    ftr2 = ftr1 if HEADER and not META.get('title') and PROFILE != 'kku' else None
+    # the prelims of a thesis: their page number in letters (the section's own format)
+    ftr3 = f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:ftr {W_NS}><w:p><w:pPr><w:pStyle w:val="Footer"/><w:bidi/></w:pPr>{fld([" PAGE "], "ب")}</w:p></w:ftr>'
 
     settings = f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:settings {W_NS}>
 {'<w:embedTrueTypeFonts/>' if QURAN_USED else ''}{'<w:updateFields w:val="true"/>' if any(b == 'TOC_PLACEHOLDER' or b.startswith('INDEX_PLACEHOLDER:') for b in B) else ''}<w:defaultTabStop w:val="720"/><w:characterSpacingControl w:val="doNotCompress"/>
@@ -674,16 +917,20 @@ def build(toc_entries, out):
         f'<Relationship Id="rIdFT" Type="{R}fontTable" Target="fontTable.xml"/><Relationship Id="rIdN" Type="{R}numbering" Target="numbering.xml"/>'
         f'<Relationship Id="rIdFn" Type="{R}footnotes" Target="footnotes.xml"/>'
         f'<Relationship Id="rIdH1" Type="{R}header" Target="header1.xml"/><Relationship Id="rIdH2" Type="{R}header" Target="header2.xml"/>'
-        f'<Relationship Id="rIdF1" Type="{R}footer" Target="footer1.xml"/><Relationship Id="rIdF2" Type="{R}footer" Target="footer2.xml"/></Relationships>')
+        f'<Relationship Id="rIdF1" Type="{R}footer" Target="footer1.xml"/><Relationship Id="rIdF2" Type="{R}footer" Target="footer2.xml"/>'
+        f'<Relationship Id="rIdF3" Type="{R}footer" Target="footer3.xml"/>'
+        + (f'<Relationship Id="rIdLogo" Type="{R}image" Target="media/logo.{LOGO[1]}"/>' if LOGO else '') + '</Relationships>')
     WM = 'application/vnd.openxmlformats-officedocument.wordprocessingml.'
     ct = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
         '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>'
         '<Default Extension="odttf" ContentType="application/vnd.openxmlformats-officedocument.obfuscatedFont"/>'
+        '<Default Extension="png" ContentType="image/png"/><Default Extension="jpeg" ContentType="image/jpeg"/>'
         f'<Override PartName="/word/document.xml" ContentType="{WM}document.main+xml"/><Override PartName="/word/styles.xml" ContentType="{WM}styles+xml"/>'
         f'<Override PartName="/word/settings.xml" ContentType="{WM}settings+xml"/><Override PartName="/word/fontTable.xml" ContentType="{WM}fontTable+xml"/>'
         f'<Override PartName="/word/numbering.xml" ContentType="{WM}numbering+xml"/><Override PartName="/word/footnotes.xml" ContentType="{WM}footnotes+xml"/>'
         f'<Override PartName="/word/header1.xml" ContentType="{WM}header+xml"/><Override PartName="/word/header2.xml" ContentType="{WM}header+xml"/>'
         f'<Override PartName="/word/footer1.xml" ContentType="{WM}footer+xml"/><Override PartName="/word/footer2.xml" ContentType="{WM}footer+xml"/>'
+        f'<Override PartName="/word/footer3.xml" ContentType="{WM}footer+xml"/>'
         '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/></Types>')
     rels = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
         '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
@@ -697,7 +944,8 @@ def build(toc_entries, out):
         z.writestr('word/footnotes.xml', footnotes_xml); z.writestr('word/fontTable.xml', fonttable); z.writestr('word/_rels/fontTable.xml.rels', fonttable_rels)
         if QURAN_USED: z.writestr('word/fonts/font1.odttf', obf(quran.FONT_FILE, g1))
         z.writestr('word/header1.xml', hdr1 or empty_h); z.writestr('word/header2.xml', empty_h)
-        z.writestr('word/footer1.xml', ftr1); z.writestr('word/footer2.xml', ftr2 or empty_f)
+        z.writestr('word/footer1.xml', ftr1); z.writestr('word/footer2.xml', ftr2 or empty_f); z.writestr('word/footer3.xml', ftr3)
+        if LOGO: z.writestr(f'word/media/logo.{LOGO[1]}', LOGO[0])
 
 
 import sys, json
@@ -707,7 +955,11 @@ if __name__ == '__main__':
     opt = lambda name: next((a.split('=', 1)[1] for a in sys.argv if a.startswith(f'--{name}=')), None)
     UTHMANI = '--uthmani' in sys.argv
     BREAK_BEFORE = {int(x) for x in (opt('break-before') or '').split(',') if x}
-    use_font(opt('font') or 'lotus')
+    PROFILE = opt('profile') or 'paper'
+    if PROFILE not in ('paper', 'kku'): raise SystemExit('--profile: paper | kku')
+    if PROFILE == 'kku':   # the guide: Traditional Arabic, 3.5 cm on the right
+        MARGIN_RIGHT = 1984; TEXTW = 11906 - 1984 - 1417
+    use_font('traditional' if PROFILE == 'kku' else (opt('font') or 'lotus'))
     BASMALA = int(opt('basmala')) if opt('basmala') else None
     if BASMALA is not None and not 1 <= BASMALA <= len(indexes.SHAPES): raise SystemExit(f'--basmala: 1 to {len(indexes.SHAPES)}')
     CITE_STYLE = (opt('cite') or '').lower() or None
@@ -734,6 +986,19 @@ if __name__ == '__main__':
         if CITE_STYLE:
             for line in cite.report({k: v for k, v in CITES.items() if k in CITED}, CITE_STYLE): print(line)
         if BASMALA and not BASMALA_USED: print('BASMALA: the text does not open with the basmala — nothing was set')
+        if PROFILE == 'kku':
+            words = {}; cur = None
+            for line in open(argv[1], encoding='utf-8').read().split('\n'):
+                t = line.strip()
+                if t.startswith('# '): cur = PRELIM.get(title_key(t[2:])); continue
+                if t and not t.startswith(('@', '[^')) and cur in ('abs_ar', 'abs_en'): words[cur] = words.get(cur, 0) + len(t.split())
+            for k, n in words.items():
+                if n > 300: THESIS_NOTES.append(f'THESIS: {"المستخلص العربي" if k == "abs_ar" else "المستخلص الإنجليزي"} {n} كلمة، والدليل يحدّه بـ٣٠٠ كلمة'.translate(HINDI))
+            ack = next((i for i, (t, l, n) in enumerate(TOC_ENTRIES) if PRELIM.get(title_key(t)) == 'ack'), None)
+            if PAGES and ack is not None and ack + 1 < len(TOC_ENTRIES):
+                a, b = PAGES.get(TOC_ENTRIES[ack][2]), PAGES.get(TOC_ENTRIES[ack + 1][2])
+                if a and b and b - a > 1: THESIS_NOTES.append('THESIS: صفحة الشكر والتقدير تزيد على صفحة، والدليل يحدّها بصفحة واحدة')
+            for n in dict.fromkeys(THESIS_NOTES): print(n)
         if PAGES and 'TOC_PLACEHOLDER' in B:
-            lost = [t for t, lvl, k in TOC_ENTRIES if f'_toc{k}' not in PAGES]
+            lost = [t for t, lvl, k in TOC_ENTRIES if k not in PAGES]
             if lost: print('TOC: page not found for:', lost)

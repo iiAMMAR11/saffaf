@@ -763,6 +763,59 @@ ok('SKILL.md: the panel comes before typesetting, and every option is documented
    and os.path.exists(os.path.join(SK, '..', 'assets', 'basmala-shapes.png')))
 ok('the bounded exceptions are stated in CLAUDE.md and SKILL.md alike', all(all(x in d_ for x in ('Citation style', 'basmala', 'Symbol fonts')) for d_ in (rules, skill_md)))
 
+# 29. a thesis by the King Khalid University guide (--profile=kku): its sections and page numbers, the title and approval
+#     pages with the user's logo, a page before each part and each appendix, the lists of tables, IEEE
+thd = os.path.join(OUT, 'thesis_in'); os.makedirs(thd, exist_ok=True); th = os.path.join(OUT, 'thesis')
+from PIL import Image
+Image.new('RGB', (240, 200), (30, 100, 70)).save(os.path.join(thd, 'logo.png'))
+open(os.path.join(thd, 'in.md'), 'w', encoding='utf-8').write(open(os.path.join(T, 'inputs', 'thesis_kku.md'), encoding='utf-8').read().replace('member:', 'logo: logo.png\nmember:', 1))
+rth = run(os.path.join(SK, 'make.py'), os.path.join(thd, 'in.md'), th, '--profile=kku', '--basmala=2', '--uthmani')
+ok('thesis: built, every heading found, no stray font', rth.returncode == 0 and os.path.exists(th + '.pdf') and 'page not found' not in rth.stdout and 'FONTS' not in rth.stdout, rth.stdout[-300:] + rth.stderr[-300:])
+thn = [l_ for l_ in rth.stdout.splitlines() if l_.startswith('THESIS:')]
+ok('thesis: what the guide needs and the text lacks is told in Arabic; a logo and a basmala given are not asked for again',
+   any('PT Bold Heading' in l_ for l_ in thn) and not any('شعار' in l_ or 'البسملة' in l_ for l_ in thn), str(thn))
+TD = zipfile.ZipFile(th + '.docx'); tdoc = TD.read('word/document.xml').decode(); tsty = TD.read('word/styles.xml').decode()
+secs = re.findall(r'<w:sectPr>.*?</w:sectPr>', tdoc)
+ok('thesis: the front pages unnumbered, the prelims in letters from «ب», the text from 1, a part\'s page with no header or number',
+   len(secs) >= 4 and 'footerReference' not in secs[0] and '<w:pgNumType w:fmt="arabicAbjad" w:start="2"/>' in secs[1]
+   and '<w:pgNumType w:fmt="decimal" w:start="1"/>' in secs[2] and all('<w:titlePg/>' in x for x in secs[3:]) and len(secs) == 5, str(len(secs)))
+ok('thesis: the guide\'s measures — 3.5 cm binding margin, 1.5 lines, headings 20 and 18, the header without its rule',
+   all('w:right="1984"' in x for x in secs) and '<w:spacing w:line="360" w:lineRule="auto"/>' in tsty
+   and re.search(r'w:styleId="Heading1".*?<w:sz w:val="40"/>', tsty) and re.search(r'w:styleId="Heading2".*?<w:sz w:val="36"/>', tsty)
+   and 'pBdr' not in TD.read('word/header1.xml').decode())
+ok('thesis: the logo is the user\'s own image, on the title and approval pages; the pages are placed by the guide\'s models',
+   'word/media/logo.png' in TD.namelist() and tdoc.count('<wp:docPr ') == 2 and tdoc.count('r:embed="rIdLogo"') == 2 and tdoc.count('w:vAnchor="page"') >= 8 and 'w:tblpPr' in tdoc)
+with pdfplumber.open(th + '.pdf') as d:
+    tp = [((pg.crop((0, 0, pg.width, 60)).extract_text() or ''), (pg.crop((0, pg.height - 70, pg.width, pg.height)).extract_text() or '').strip(),
+           pg.extract_text() or '') for pg in d.pages]
+def lkey(x): return ''.join(sorted(c for c in x if '\u0621' <= c <= '\u064a'))   # the letters of a line, in any order (pdfplumber gives Arabic in visual order, ligatures apart)
+def rev(x): return x[::-1]
+def find_page(t, start=0): return next((k for k, x in enumerate(tp) if k >= start and any(lkey(l_) == lkey(t) and '....' not in l_ for l_ in x[2].split('\n'))), -1)
+D2 = str.maketrans('٠١٢٣٤٥٦٧٨٩', '0123456789')
+intro, toc_p = find_page('المقدمة'), find_page('قائمة المحتويات')
+part1, app1, vix = find_page('الباب الأول: الدراسة النظرية', intro + 1), find_page('ملحق رقم (١)', intro + 1), find_page('فهرس الآيات القرآنية', intro + 1)
+pre = [x[1] for x in tp[3:intro]]
+ok('thesis PDF: three front pages bare; the prelims lettered ب ج د…; the introduction on page 1',
+   all(not x[0] and not x[1] for x in tp[:3]) and pre == ['ب', 'ج', 'د', 'ه', 'و', 'ز', 'ح', 'ط'][:len(pre)] and len(pre) >= 6 and tp[intro][1].translate(D2) == '1', str(pre))
+ok('thesis PDF: a part\'s page carries no header and no number; an appendix has its page before it; indexes after the appendices',
+   part1 > intro and not tp[part1][0].strip() and not tp[part1][1] and 0 < app1 < vix)
+tocl = [l_ for x in tp[toc_p:intro] for l_ in x[2].split('\n') if '....' in l_]
+def toc_num(t): return next((l_.split('.')[0].strip() for l_ in tocl if lkey(l_.split('.')[-1]) == lkey(t) and (t.isascii() == l_.split('.')[-1].isascii())), None)
+ok('thesis PDF: the contents give the prelims their letters (as their footers) and the text its numbers',
+   toc_num('الشكر والتقدير') == 'ج' and toc_num('Abstract') in ('ه', 'ـه') and (toc_num('المقدمة') or '').translate(D2) == '1'
+   and toc_num('قائمة المحتويات') == tp[toc_p][1], str(tocl[:5]))
+tl = find_page('قائمة الجداول')
+ok('thesis PDF: the list of tables names each caption with its page', 0 < tl < intro and len([l_ for l_ in tp[tl][2].split('\n') if '....' in l_ and rev('جدول') in l_ and re.match(r'[0-9٠-٩]+\.', l_)]) == 2)
+ts.CITES = srcs; ts.CITE_STYLE = 'ieee'; ts.CITED.clear(); ts.CITE_ORDER.clear()
+i1 = ts.expand_cites('{{مرجع|bukhari|١/ ٦}}'); i2 = ts.expand_cites('{{مرجع|aune|p. 40}}'); i3 = ts.expand_cites('{{مرجع|bukhari|٢/ ٣}}')
+ok('IEEE: numbered by first citation, the full reference the first time, the number after; the list in that order',
+   i1.startswith('[1] محمد بن إسماعيل البخاري، **صحيح البخاري**') and i2.startswith('[2] K. Aune, "Much Less Religious') and i3 == '[1]، ٢/ ٣.'
+   and ts.CITE_ORDER == ['bukhari', 'aune'] and ct.bib(srcs['aune'], 'ieee', 2).startswith('[2] K. Aune,') and ct.report(srcs, 'ieee') == ['CITE: ينقص «صحيح البخاري» لنظام IEEE: مكان النشر'])
+ts.CITES = {}; ts.CITE_STYLE = None; ts.CITED.clear(); ts.CITE_ORDER.clear()
+ok('SKILL.md: the thesis profile and IEEE are documented; the description fits the 1024 characters a skill allows',
+   all(x in skill_md for x in ('--profile=kku', '@approval', '@appendix', '@figures', 'THESIS', 'PT Bold Heading', 'IEEE'))
+   and len(re.search(r'^description: (.*)$', skill_md, re.M).group(1)) <= 1024)
+
 failed = [n for n, p, _ in results if not p]
 print(f'\n{len(results) - len(failed)}/{len(results)} passed. Outputs: {OUT}')
 sys.exit(1 if failed else 0)

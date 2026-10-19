@@ -24,20 +24,21 @@ edition, volumes, place, publisher, year, journal, volume, issue, pages, contain
 degree, university, site, url, accessed, date, library, number."""
 import json, re, sys
 
-STYLES = ('chicago', 'apa', 'harvard', 'mla')
-NAMES = {'chicago': 'Chicago', 'apa': 'APA', 'harvard': 'Harvard', 'mla': 'MLA'}
+STYLES = ('chicago', 'apa', 'harvard', 'mla', 'ieee')
+NAMES = {'chicago': 'Chicago', 'apa': 'APA', 'harvard': 'Harvard', 'mla': 'MLA', 'ieee': 'IEEE'}
 FIELD_AR = {'author': 'المؤلف', 'title': 'العنوان', 'place': 'مكان النشر', 'publisher': 'الناشر', 'year': 'سنة النشر',
             'journal': 'اسم المجلة', 'volume': 'رقم المجلد', 'issue': 'رقم العدد', 'pages': 'الصفحات', 'degree': 'الدرجة العلمية',
             'university': 'الجامعة', 'url': 'الرابط', 'accessed': 'تاريخ الاطلاع', 'library': 'مكان المخطوط', 'container': 'الكتاب الجامع',
             'site': 'اسم الموقع'}
 NEEDS = {   # (type, style) -> details the style cannot do without
     'book': {'chicago': 'author title place publisher year', 'apa': 'author year title publisher',
-             'harvard': 'author year title place publisher', 'mla': 'author title publisher year'},
+             'harvard': 'author year title place publisher', 'mla': 'author title publisher year', 'ieee': 'author title place publisher year'},
     'article': {s: 'author title journal year pages' for s in STYLES},
     'chapter': {'chicago': 'author title container place publisher year pages', 'apa': 'author year title container publisher pages',
-                'harvard': 'author year title container place publisher pages', 'mla': 'author title container publisher year pages'},
+                'harvard': 'author year title container place publisher pages', 'mla': 'author title container publisher year pages',
+                'ieee': 'author title container place publisher year pages'},
     'thesis': {s: 'author title degree university year' for s in STYLES},
-    'web': {'chicago': 'title site url accessed', 'apa': 'title site url', 'harvard': 'title url accessed', 'mla': 'title site url'},
+    'web': {'chicago': 'title site url accessed', 'apa': 'title site url', 'harvard': 'title url accessed', 'mla': 'title site url', 'ieee': 'title url accessed'},
     'manuscript': {s: 'author title library' for s in STYLES},
 }
 
@@ -85,12 +86,40 @@ def pubinfo(src, ar, with_place=True):
     if with_place and src.get('place'): return src['place'] + (s + pub if pub else '')
     return pub
 
-def note(src, loc, style, first):
+def ieee_names(src, ar):
+    """IEEE: initials then family name, «K. Aune»; Arabic names as the source gives them in full."""
+    au = src.get('author') or []
+    xs = [((' '.join(g[0] + '.' for g in a.get('given', '').split() if g) + ' ') if a.get('given') else '') + a['family'] if 'family' in a
+          else person(a, ar)[1] for a in au]
+    if len(xs) <= 2: return (' و' if ar else ' and ').join(xs)
+    return ('، ' if ar else ', ').join(xs[:-1]) + ('، و' if ar else ', and ') + xs[-1]
+
+def ieee_ref(src):
+    """The full IEEE reference, without its number."""
+    ar = arabic(src); c = '، ' if ar else ', '; t = src.get('type', 'book'); title = src.get('title', '')
+    who = ieee_names(src, ar)
+    if t == 'article':
+        return join([who, part(title, ar), work(src.get('journal', ''), ar), (('مج ' if ar else 'vol. ') + src['volume']) if src.get('volume') else '',
+                     (('ع ' if ar else 'no. ') + src['issue']) if src.get('issue') else '', (('ص ' if ar else 'pp. ') + src['pages']) if src.get('pages') else '', src.get('year', '')], c)
+    if t == 'web':
+        acc = (('تاريخ الاطلاع: ' if ar else 'Accessed: ') + src['accessed']) if src.get('accessed') else ''
+        return join([who, part(title, ar), src.get('site', ''), acc, src.get('url', '')], c)
+    if t == 'thesis':
+        return join([who, part(title, ar), src.get('degree', ''), src.get('university', ''), src.get('year', '')], c)
+    head = join([who, work(title, ar) if t != 'chapter' else part(title, ar)] + ([('في: ' if ar else 'in ') + work(src.get('container', ''), ar)] if t == 'chapter' else [])
+                + details(src, ar, 'ieee'), c)
+    pub = join([src.get('place', ''), src.get('publisher', '')], ': ')
+    return join([head, join([pub, src.get('year', '')], c)], '. ' if not ar else '. ')
+
+def note(src, loc, style, first, num=None):
     """The citation as it stands in a footnote, without its closing full stop (typeset.py adds one when the citation
     ends the note)."""
     ar = arabic(src); c = '، ' if ar else ', '; end = ''
     t = src.get('type', 'book'); title = src.get('title', ''); short = src.get('short') or title
     loc = loc.strip()
+    if style == 'ieee':   # the number of the source in the list, with the full reference the first time
+        n = f'[{num}]'
+        return join([f'{n} {ieee_ref(src)}' if first else n, loc], c) + end
     if style in ('apa', 'harvard'):   # author-date
         who = names(src, 0, ar) or part(title, ar)
         if style == 'apa': return join([f'{who} ({src.get("year", "")})' if src.get('year') else who, loc], c) + end
@@ -116,8 +145,10 @@ def note(src, loc, style, first):
         return join([who, work(title, ar), join([src.get('library', ''), src.get('number', '')], ' '), loc], c) + end
     return join([paren(join([who, work(title, ar)] + details(src, ar, style), c), pubinfo(src, ar)), loc], c) + end
 
-def bib(src, style):
-    """The source as it stands in the list of sources (فهرس المصادر والمراجع)."""
+def bib(src, style, num=None):
+    """The source as it stands in the list of sources (فهرس المصادر والمراجع). IEEE numbers its list in the order of
+    first citation."""
+    if style == 'ieee': return f'[{num}] {ieee_ref(src)}.'.replace('..', '.')
     ar = arabic(src); c = '، ' if ar else ', '; d = '. '
     t = src.get('type', 'book'); title = src.get('title', '')
     who = names(src, 2, ar, death=style in ('chicago', 'mla')); year = src.get('year', '')
