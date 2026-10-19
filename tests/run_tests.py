@@ -281,7 +281,7 @@ if left:   # where a page ends depends on the LibreOffice version; the versions 
     ok('make.py moves such a heading to the next page with its paragraph', mk.find_pages(os.path.join(OUT, 'sample_page.pdf'), [('المطلب الأول: المعنى في اللغة والاصطلاح', 2)]) == [2])
 else: print('INFO this LibreOffice version lays the page out differently: no heading is left alone to begin with')
 ok('no heading is left alone at the foot of a page', mk.lone_heads(os.path.join(OUT, 'sample_page.pdf'), hs) == [])
-ok('the Word file gets no forced page break', 'pageBreakBefore' not in zipfile.ZipFile(os.path.join(OUT, 'sample_page.docx')).read('word/document.xml').decode())
+ok('a page break the PDF needs goes into the Word file too: it is the same file', "md, docx, 'word'] + args + ([f'--break-before=" in open(os.path.join(SK, 'make.py'), encoding='utf-8').read())
 
 # 8b. the fonts zip: the two Lotus Lotfi files always; the Quran font whenever at least one verse was converted, and only then
 def zipped(docx):
@@ -596,6 +596,15 @@ mk_src = open(os.path.join(SK, 'make.py'), encoding='utf-8').read()
 ok('the PDF route turns off space shrinking only for a document that stalls, and limits every conversion', 'JustifyLinesWithShrinking" config:type="boolean">false' in mk_src
    and "if it.filename == 'settings.xml' and NO_SHRINK" in mk_src and 'timeout=limit' in mk_src)
 
+# 23b. one file: the Word file delivered is the very file the PDF is exported from
+art_docx = os.path.join(OUT, 'article.docx'); again = os.path.join(OUT, 'article_again.pdf'); mk.to_pdf(art_docx, again)
+def page_texts(pdf):
+    with pdfplumber.open(pdf) as d: return [(pg.extract_text() or '') for pg in d.pages]
+ok('the PDF is exported from the delivered Word file itself: exporting that file again gives the same pages', page_texts(again) == page_texts(os.path.join(OUT, 'article.pdf'))
+   and len(page_texts(again)) >= 1)
+ok('the Word file numbers its notes with its own brackets; the PDF route drops them only in its intermediate file', '<w:t>‏(‏</w:t></w:r><w:r><w:rPr><w:sz w:val="26"/><w:szCs w:val="26"/><w:rtl/></w:rPr><w:footnoteRef/>'
+   in zipfile.ZipFile(art_docx).read('word/footnotes.xml').decode() and not re.search(r'\(\s*\)', ''.join(page_texts(again))))
+
 # 24. index marks, «***» and citations leave the author's words as they are
 import indexes as ixm, cite as ct
 ts.IX.clear(); ts.IX_WANT.clear(); ts.UTHMANI = False
@@ -713,11 +722,16 @@ ok('Traditional Arabic (PDF): only its two faces and Lotus for the basmala; the 
 rt2 = subprocess.run([sys.executable, os.path.join(SK, 'typeset.py'), ta, os.path.join(OUT, 'x.docx'), 'word', '--font=traditional'], capture_output=True, text=True, env={**os.environ, 'SAFFAF_TRADITIONAL_DIR': os.path.join(OUT, 'no_such_dir')})
 ok('Traditional Arabic asked for without its files: a clear stop', rt2.returncode != 0 and 'assets/traditional' in rt2.stderr)
 
-# 27. symbol fonts (AGA Arabesque stores ﷺ as «a»): reported always, converted only with --symbols
+# 27. symbol fonts (AGA Arabesque stores ﷺ as «e»; the table is read from the font itself): reported always, converted
+#     only with --symbols, and only the signs that have a standard character
+ag0 = run(os.path.join(SK, 'to_md.py'), os.path.join(T, 'formats', 'aga_symbols.docx'), os.path.join(OUT, 'aga0.md')); a0 = open(os.path.join(OUT, 'aga0.md'), encoding='utf-8').read()
+ag1 = run(os.path.join(SK, 'to_md.py'), os.path.join(T, 'formats', 'aga_symbols.docx'), os.path.join(OUT, 'aga1.md'), '--symbols'); a1 = open(os.path.join(OUT, 'aga1.md'), encoding='utf-8').read()
+ok('symbol fonts: reported, and the text left as written without --symbols', '«e»×1 = ﷺ' in ag0.stdout and '«a»×1 (meaning unknown' in ag0.stdout and 'قال النبي e:' in a0)
+ok('symbol fonts: with --symbols the known signs become their standard characters; an ornament stays', a1 == a0.replace('النبي e', 'النبي ﷺ').replace('عمر t', 'عمر ﵁').replace('وموسى u', 'وموسى ﵇')
+   .replace('والله U', 'والله ﷿').replace('ورسوله r', 'ورسوله ﷺ') and 'وزخرفة a' in a1)
 r0, m0 = to_md(os.path.join(T, 'formats', 'stress_article.docx'))
 r1 = run(os.path.join(SK, 'to_md.py'), os.path.join(T, 'formats', 'stress_article.docx'), os.path.join(OUT, 'sym.md'), '--symbols'); m1 = open(os.path.join(OUT, 'sym.md'), encoding='utf-8').read()
-ok('symbol fonts: reported, and the text left as written without --symbols', 'SYMBOLS: aga arabesque: «a»×1' in r0.stdout and 'وقال النبي a:' in m0)
-ok('symbol fonts: with --symbols the known sign becomes its standard character, and nothing else changes', 'وقال النبي ﷺ:' in m1 and m1.replace('وقال النبي ﷺ:', 'وقال النبي a:') == m0)
+ok('symbol fonts: a letter the font draws as an ornament («a») is never taken for ﷺ', '«a»×1 (meaning unknown' in r0.stdout and m1 == m0 and 'وقال النبي a:' in m1)
 
 # 28. the settings panel: analyze.py reads the draft; SKILL.md tells Claude to ask before typesetting
 ra2 = run(os.path.join(SK, 'analyze.py'), os.path.join(T, 'inputs', 'indexes.md')).stdout

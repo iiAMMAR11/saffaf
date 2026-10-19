@@ -8,7 +8,7 @@ usage: python3 to_md.py INPUT OUTPUT.md
   .pdf                          -> refused: text extracted from PDF is damaged; ask for the original
 Every result is checked for PDF-copy damage (reversed lam-alef); the report says DAMAGED when found.
 Prints a short report (format, footnotes found, warnings) to stdout.
-Word files that draw signs with a symbol font (AGA Arabesque and the like: the file stores «a» and the font draws ﷺ)
+Word files that draw signs with a symbol font (AGA Arabesque and the like: the file stores «e» and the font draws ﷺ)
 are reported on a SYMBOLS line. Only with --symbols (the user asked for it) are the signs whose meaning is known
 written as their standard character; the others stay as they are and are named on the line."""
 import os, re, sys, shutil, subprocess, tempfile, zipfile, posixpath
@@ -23,8 +23,13 @@ warnings = []
 # Symbol fonts: font name -> {character stored in the file: the standard character the font draws for it}. Only
 # mappings that were checked go here; a character with no entry is left as it is and reported.
 SYMBOL_FONTS = {
-    'aga arabesque': {'a': '\ufdfa'},           # «a» -> ﷺ (seen in a real file: «وقال النبي a»)
-    'aga arabesque desktop': {'a': '\ufdfa'},
+    # read from the font itself (AGA Arabesque, version 1.003): only the signs that have a standard character; the
+    # font's other glyphs (ornaments, «الله أكبر», month names…) have none and stay as they are
+    'aga arabesque': {'e': '\ufdfa', 'r': '\ufdfa',   # صلى الله عليه وسلم (two drawings)
+                      't': '\ufd41', 'y': '\ufd43',   # رضي الله عنه، رضي الله عنهم
+                      'u': '\ufd47',                   # عليه السلام
+                      'I': '\ufdfe', 'U': '\ufdff', 'Y': '\ufdfb',   # سبحانه وتعالى، عز وجل، جل جلاله
+                      'P': '\ufdfd'},                  # البسملة
 }
 SYMBOLS_FOUND = {}    # font -> {character: count}
 CONVERT_SYMBOLS = False

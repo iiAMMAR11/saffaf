@@ -71,6 +71,10 @@ def patch_odt(src, dst, labels=None):
             # first line runs straight on from «(1)»; give it back (once) so the text starts where its later lines hang.
             # The tab goes inside the first span: the number takes the look of what begins the note (a Latin note's
             # number stays Western, in its Latin font).
+            # The Word file writes the note's number between brackets of its own, «(» number «)»; LibreOffice reads them
+            # as text at the head of the note (and drops the number), and draws its own «(1)» from the settings above:
+            # those brackets go, here in the intermediate file only.
+            t = re.sub(r'(<text:note-body><text:p\b[^>]*>(?:<text:span\b[^>]*>)?)\u200f?\(\u200f?\u200f?\)\u200f?', r'\1', t)
             t = re.sub(r'<text:note-body><text:p\b[^>]*>(?:<text:span\b[^>]*>)?(?:<text:tab/>)?',
                        lambda m: m.group(0) if m.group(0).endswith('<text:tab/>') else m.group(0) + '<text:tab/>', t)
             if it.filename == 'content.xml':
@@ -122,16 +126,34 @@ def note_refs(pdf):
             out.append(refs)
     return out
 
+def word14(docx, d):
+    """A copy of the Word file marked Word 2010 (compatibility mode 14): LibreOffice then reads it without its
+    Word-imitating space shrinking. Only the mode differs; the content is the same."""
+    out = os.path.join(d, os.path.basename(docx))
+    zin = zipfile.ZipFile(docx); z = zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED)
+    for it in zin.infolist():
+        data = zin.read(it.filename)
+        if it.filename == 'word/settings.xml':
+            data = data.decode().replace('w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"',
+                                         'w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="14"').encode()
+        z.writestr(it, data)
+    z.close(); return out
+
 def to_pdf(docx, pdf):
+    """Export the PDF from the Word file, through LibreOffice's ODT (patched for the notes, see patch_odt)."""
+    global NO_SHRINK
     d = tempfile.mkdtemp()
-    lo(['--convert-to', 'odt', '--outdir', d, docx])
+    # LibreOffice lays the document out while reading it, and can loop there (see patch_odt): a stall switches the rest
+    # of the build to a copy it reads without space shrinking
+    if NO_SHRINK or not lo(['--convert-to', 'odt', '--outdir', d, docx], limit=150):
+        NO_SHRINK = True
+        lo(['--convert-to', 'odt', '--outdir', d, word14(docx, tempfile.mkdtemp())])
     odt = os.path.join(d, os.path.basename(docx)[:-5] + '.odt')
     shutil.move(odt, odt + '.lo')
     # Footnotes restart at (1) on each page. LibreOffice numbers a footnote by the page where it first lays it out, and
     # keeps that number when the line then moves to the next page because its note no longer fits there: the note shows
     # (2) or (3) on its new page. Every layout pass does it again (no setting or reload helps), so when a page's numbers
     # are not 1, 2, 3… every footnote gets its number written in by hand, counted from where the notes really fell.
-    global NO_SHRINK
     labels = None
     for _ in range(3):
         patch_odt(odt + '.lo', odt, labels)
@@ -253,14 +275,17 @@ def lone_heads(pdf, heads):
 BREAKS = []
 NO_SHRINK = False   # set when LibreOffice stalled on this document (see patch_odt)
 def lo_pdf(ts, md, docx, pdf, args):
-    """The PDF route: build, then give every heading left alone at the foot of a page a page break before it and rebuild."""
+    """Build the Word file, then export the PDF from that same file. A heading the PDF engine left alone at the foot of
+    a page gets a page break before it, in the Word file, which is then built and exported again. -> typeset's report."""
     heads = keep_heads(md)
     for _ in range(6):
-        subprocess.run(['python3', ts, md, docx, 'lo'] + args + ([f'--break-before={",".join(map(str, BREAKS))}'] if BREAKS else []), check=True)
+        r = subprocess.run(['python3', ts, md, docx, 'word'] + args + ([f'--break-before={",".join(map(str, BREAKS))}'] if BREAKS else []), capture_output=True, text=True)
+        if r.returncode: sys.exit(r.stderr.strip().splitlines()[-1] if r.stderr.strip() else 'typeset.py failed')
         to_pdf(docx, pdf)
         new = [n for n in lone_heads(pdf, heads) if n not in BREAKS]
         if not new: break
         BREAKS.extend(new)
+    return r.stdout
 
 FONTS_ZIP = 'خطوط-لملف-Word.zip'
 def fonts_zip(docx):
@@ -371,12 +396,10 @@ if __name__ == '__main__':
         for _ in range(2):  # converge page numbers
             lo_pdf(ts, md, w + '/p.docx', w + '/p.pdf', args())
             measure(w + '/p.pdf')
-    for _ in range(2):   # the final build; once more if its own layout moved a page number
-        r = subprocess.run(['python3', ts, md, out + '.docx', 'word'] + args(), capture_output=True, text=True)
-        if r.returncode: sys.exit(r.stderr.strip().splitlines()[-1] if r.stderr.strip() else 'typeset.py failed')
-        lo_pdf(ts, md, w + '/f.docx', out + '.pdf', args())
+    for _ in range(2):   # the final build: the Word file delivered is the very file the PDF is exported from
+        report = lo_pdf(ts, md, out + '.docx', out + '.pdf', args())
         if not (has_toc or has_index) or measure(out + '.pdf'): break
-    print(r.stdout, end='')
+    print(report, end='')
     if measure.missing: print('TOC: page not found for:', measure.missing)
     stray = stray_fonts(out + '.pdf')
     if stray:   # in Arabic: it goes into the reply to the user
