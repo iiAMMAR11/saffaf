@@ -828,7 +828,9 @@ ok('SKILL.md: the thesis profile and IEEE are documented; the description fits t
 with pdfplumber.open(th + '.pdf') as d:
     lat = [(c_['fontname'].split('+')[-1], c_['text']) for pg in d.pages for c_ in pg.chars]
 ok('PDF: every Latin letter in Times New Roman, none in Liberation Serif, no Arabic letter in Times',
-   [x for x in lat if x[1].isascii() and x[1].isalpha()] and all(f_.startswith('TimesNewRoman') for f_, t_ in lat if t_.isascii() and t_.isalpha())
+   # (a Latin letter «in» Traditional Arabic is one of its ligature glyphs, which the PDF labels with a Latin letter)
+   [x for x in lat if x[1].isascii() and x[1].isalpha()] and all(f_.startswith('TimesNewRoman') for f_, t_ in lat if t_.isascii() and t_.isalpha() and 'Traditional' not in f_)
+   and ''.join(t_ for f_, t_ in lat if f_ == 'TimesNewRomanPS-BoldMT').count('Abstract') == 2   # its heading, and its line in the contents
    and not any('Liberation' in f_ for f_, _ in lat) and not any('Times' in f_ and re.match('[\u0600-\u06FF]', t_) for f_, t_ in lat))
 tsum = {'Times.TTF': '4e98adeff8ccc8ef4e3ece8d4547e288ff85fdc9c7ca711a4599c234874bbe86', 'Timesbd.TTF': '4357b63cef20c01661a53c5dae70ffd20cb4765503aaed6d38b17a57c5a90bff',
         'Timesi.TTF': 'c25ae529b4cecdbca148b6ccb862ee0abad770af8b1fd29c8dba619d1b8da78a', 'Timesbi.TTF': '192e1b0d18e90334e999a99f8c32808d6a2e74b3698b8cd90c943c2249a46549'}

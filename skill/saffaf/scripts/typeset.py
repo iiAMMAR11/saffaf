@@ -181,6 +181,8 @@ def toc(entries=None):
     out = []
     for t, lvl, name in TOC_ENTRIES:
         ind = '<w:ind w:left="567"/>' if lvl == 2 else ''   # the start side (see the note on hanging indents above)
+        # a Latin title (Abstract) keeps the Latin font in its line, as under its heading
+        t = '`'.join(x if k % 2 else LATIN.sub(lambda m: '`\u202a' + m.group(0) + '\u202c`', x) for k, x in enumerate(t.split('`')))
         out.append(numbered_line(t, [name], ind=ind, bold=(lvl == 1)))
     return ''.join(out)
 
