@@ -722,6 +722,28 @@ ok('Traditional Arabic (PDF): only its two faces and Lotus for the basmala; the 
 rt2 = subprocess.run([sys.executable, os.path.join(SK, 'typeset.py'), ta, os.path.join(OUT, 'x.docx'), 'word', '--font=traditional'], capture_output=True, text=True, env={**os.environ, 'SAFFAF_TRADITIONAL_DIR': os.path.join(OUT, 'no_such_dir')})
 ok('Traditional Arabic asked for without its files: a clear stop', rt2.returncode != 0 and 'assets/traditional' in rt2.stderr)
 
+# 26b. the real Traditional Arabic pair in assets/traditional: its bold face is used (fontconfig is told its old-scale
+#      weight), and the contents find every heading
+if os.path.exists(os.path.join(SK, '..', 'assets', 'traditional', 'trado.ttf')):
+    tr2 = os.path.join(OUT, 'trad_real', 'a'); env2 = {k_: v_ for k_, v_ in os.environ.items() if k_ != 'SAFFAF_TRADITIONAL_DIR'}
+    rr = subprocess.run([sys.executable, os.path.join(SK, 'make.py'), os.path.join(T, 'inputs', 'indexes.md'), tr2, '--font=traditional', '--cite=chicago',
+                         f'--sources={os.path.join(T, "inputs", "sources.json")}'], capture_output=True, text=True, env=env2)
+    with pdfplumber.open(tr2 + '.pdf') as d: rf = {c_['fontname'].split('+')[-1] for pg in d.pages for c_ in pg.chars}
+    ok('Traditional Arabic (real files): regular and bold faces both drawn, every heading found, no stray font', rr.returncode == 0 and any('Bold' in f_ and 'Traditional' in f_ for f_ in rf)
+       and any(f_ == 'TraditionalArabic' for f_ in rf) and 'page not found' not in rr.stdout and 'FONTS' not in rr.stdout, f'{sorted(rf)} {rr.stdout[-200:]}')
+
+# 26c. page numbers each program computes for itself: every number in the contents and the indexes is a PAGEREF field
+#      to a bookmark; the file asks Word to update its fields; LibreOffice computes them as it lays the PDF out
+ixd = zipfile.ZipFile(ix + '.docx').read('word/document.xml').decode(); ixs = zipfile.ZipFile(ix + '.docx').read('word/settings.xml').decode()
+refs_ = re.findall(r'PAGEREF (_(?:toc|ix|fn)\d+) ', ixd)
+ok('contents and indexes: their page numbers are fields to bookmarks in the text, and Word is asked to update them', len(refs_) >= 30 and all(f'w:name="{r_}"' in ixd for r_ in set(refs_))
+   and '<w:updateFields w:val="true"/>' in ixs and len([r_ for r_ in refs_ if r_.startswith('_toc')]) == 15)
+fk = os.path.join(OUT, 'fake_pages.json'); open(fk, 'w').write('{"_toc1": 77, "_toc2": 77}')
+run(os.path.join(SK, 'typeset.py'), os.path.join(T, 'inputs', 'long_toc.md'), os.path.join(OUT, 'fake.docx'), 'word', f'--pages={fk}')
+mk.to_pdf(os.path.join(OUT, 'fake.docx'), os.path.join(OUT, 'fake.pdf'))
+with pdfplumber.open(os.path.join(OUT, 'fake.pdf')) as d: ftxt = ''.join(pg.extract_text() or '' for pg in d.pages[:3])
+ok('the PDF engine computes the page numbers itself, whatever value the file stores', '77' not in ftxt and '٧٧' not in ftxt and '٧٧' in zipfile.ZipFile(os.path.join(OUT, 'fake.docx')).read('word/document.xml').decode())
+
 # 27. symbol fonts (AGA Arabesque stores ﷺ as «e»; the table is read from the font itself): reported always, converted
 #     only with --symbols, and only the signs that have a standard character
 ag0 = run(os.path.join(SK, 'to_md.py'), os.path.join(T, 'formats', 'aga_symbols.docx'), os.path.join(OUT, 'aga0.md')); a0 = open(os.path.join(OUT, 'aga0.md'), encoding='utf-8').read()

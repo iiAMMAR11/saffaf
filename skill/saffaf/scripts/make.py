@@ -23,7 +23,17 @@ def setup():
     os.makedirs(fd, exist_ok=True)
     for f in os.listdir(os.path.join(HERE, '..', 'assets', 'fonts')):
         shutil.copy(os.path.join(HERE, '..', 'assets', 'fonts', f), fd)
-    if TRAD: shutil.copy(TRAD[1], fd); TRAD[2] and shutil.copy(TRAD[2], fd)
+    if TRAD:
+        shutil.copy(TRAD[1], fd); TRAD[2] and shutil.copy(TRAD[2], fd)
+        # Older font files give their weight on the old 1-9 scale (Traditional Arabic Bold says 7, meaning 700), which
+        # fontconfig reads as the thinnest weight, so the bold face is never chosen and bold is faked. fontconfig is told
+        # the weight its own style name already gives; the font file itself is not touched.
+        if sys.platform.startswith('linux'):
+            cd = os.path.expanduser('~/.config/fontconfig/conf.d'); os.makedirs(cd, exist_ok=True)
+            open(os.path.join(cd, '99-saffaf-weight.conf'), 'w').write(
+                '<?xml version="1.0"?><!DOCTYPE fontconfig SYSTEM "fonts.dtd"><fontconfig><match target="scan">'
+                f'<test name="family"><string>{TRAD[0]}</string></test><test name="style"><string>Bold</string></test>'
+                '<edit name="weight" mode="assign"><const>bold</const></edit></match></fontconfig>')
     shutil.copy(os.path.join(HERE, '..', 'assets', 'symbols', 'NotoNaskhArabic-Regular.ttf'), fd)
     if UTHMANI: shutil.copy(os.path.join(HERE, '..', 'assets', 'quran', 'UthmanicHafs_V22.ttf'), fd)
     if shutil.which('fc-cache'): subprocess.run(['fc-cache', '-f'], capture_output=True)
@@ -121,8 +131,12 @@ def note_refs(pdf):
                 if not isinstance(d, list) or len(d) < 4 or not isinstance(d[3], (int, float)): continue
                 j = at.get(getattr(d[0], 'objid', None), -1)
                 if j < i or j == i and p.height - d[3] <= a['bottom']: continue
-                refs.append(''.join(c['text'] for c in p.chars if a['x0'] - 1 <= (c['x0'] + c['x1']) / 2 <= a['x1'] + 1
-                                    and a['top'] - 1 <= (c['top'] + c['bottom']) / 2 <= a['bottom'] + 1 and c['text'].translate(DIG).isdigit()).translate(DIG))
+                # a reference is a small raised number; the contents and the indexes link their full-size page numbers
+                # to their headings and entries too (LibreOffice makes a link of every page reference)
+                digits = [c for c in p.chars if a['x0'] - 1 <= (c['x0'] + c['x1']) / 2 <= a['x1'] + 1
+                          and a['top'] - 1 <= (c['top'] + c['bottom']) / 2 <= a['bottom'] + 1 and c['text'].translate(DIG).isdigit()]
+                if digits and all(c['size'] >= 12.5 for c in digits): continue
+                refs.append(''.join(c['text'] for c in digits if c['size'] < 12.5).translate(DIG))
             out.append(refs)
     return out
 
@@ -187,7 +201,7 @@ def dest_pages(pdf):
         for name, d in dests.items():
             name = name.decode() if isinstance(name, bytes) else str(name)
             name = re.sub(r'^5F', '_', name)   # LibreOffice writes the «_» of a bookmark's name as its hex code
-            if not re.match(r'^_(ix|fn)\d+$', name): continue
+            if not re.match(r'^_(ix|fn|toc)\d+$', name): continue
             d = resolve1(d); d = resolve1(d['D']) if isinstance(d, dict) else d
             pg = at.get(getattr(d[0], 'objid', None)) if isinstance(d, list) and d else None
             if pg: out[name] = pg
@@ -377,30 +391,23 @@ if __name__ == '__main__':
     src = open(md, encoding='utf-8').read().split('\n')
     has_toc = any(l.strip() == '@toc' for l in src)
     has_index = any(indexes.directive(l) for l in src)
-    toc_path = os.path.join(w, 'toc.json'); pages_path = os.path.join(w, 'pages.json')
-    heads = headings(md)
-    def args(): return ([toc_path] if has_toc else []) + flags + ([f'--pages={pages_path}'] if has_index else [])
+    pages_path = os.path.join(w, 'pages.json')
+    paged = has_toc or has_index   # the contents and the indexes take their stored page numbers from the PDF
+    def args(): return flags + ([f'--pages={pages_path}'] if paged else [])
     def measure(pdf):
-        """Read the pages the layout gave the headings and the index entries; True when they are what the file says."""
-        old = (open(toc_path).read() if has_toc else '', open(pages_path).read() if has_index else '')
-        if has_toc:
-            pg = find_pages(pdf, heads)
-            json.dump([[t, str(p).translate(HINDI) if p else '؟', l] for (t, l), p in zip(heads, pg)], open(toc_path, 'w'), ensure_ascii=False)
-            measure.missing = [t for (t, l), p in zip(heads, pg) if not p]
-        if has_index: json.dump(dest_pages(pdf), open(pages_path, 'w'))
-        return old == (open(toc_path).read() if has_toc else '', open(pages_path).read() if has_index else '')
-    measure.missing = []
-    if has_toc: json.dump([[t, '٠٠', l] for t, l in heads], open(toc_path, 'w'), ensure_ascii=False)
-    if has_index: json.dump({}, open(pages_path, 'w'))
-    if has_toc or has_index:
+        """Read where the headings and the index entries fell in the PDF; True when the file already says so."""
+        old = open(pages_path).read()
+        json.dump(dest_pages(pdf), open(pages_path, 'w'), sort_keys=True)
+        return old == open(pages_path).read()
+    if paged:
+        json.dump({}, open(pages_path, 'w'))
         for _ in range(2):  # converge page numbers
             lo_pdf(ts, md, w + '/p.docx', w + '/p.pdf', args())
             measure(w + '/p.pdf')
     for _ in range(2):   # the final build: the Word file delivered is the very file the PDF is exported from
         report = lo_pdf(ts, md, out + '.docx', out + '.pdf', args())
-        if not (has_toc or has_index) or measure(out + '.pdf'): break
+        if not paged or measure(out + '.pdf'): break
     print(report, end='')
-    if measure.missing: print('TOC: page not found for:', measure.missing)
     stray = stray_fonts(out + '.pdf')
     if stray:   # in Arabic: it goes into the reply to the user
         print('FONTS: حروف ليست في خطوط المهارة فرُسمت في PDF بخطٍّ آخر أو لم تُرسم: '

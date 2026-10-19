@@ -145,13 +145,45 @@ def table(rows, widths, head_rows=1, first_col_head=False, body_jc='center'):
     out.append('</w:tbl>')
     return ''.join(out)
 
-def toc(entries):
+# ---------- page numbers that each program computes for itself ----------
+# Every number in the contents and the indexes is a PAGEREF field to a bookmark where the heading or the entry stands.
+# Its stored value is the page in the PDF (make.py reads it from the PDF's named destinations); LibreOffice computes
+# the field again as it lays the PDF out, and Word computes it from its own layout when the reader lets it update the
+# fields (the file asks for that when it opens), so each file's numbers are its own pages.
+# The fields are not links: make.py counts the PDF's links to find the footnote references.
+TOC_ENTRIES = []   # (heading text, level, bookmark number)
+def with_bookmark(par, name, n):
+    return par.replace('</w:pPr>', '</w:pPr>' + bookmark(name, n), 1)
+
+def pageref(name, cached, bold=False):
+    r = '<w:rPr>' + ('<w:b/><w:bCs/>' if bold else '') + '<w:rtl/></w:rPr>'
+    return (f'<w:r>{r}<w:fldChar w:fldCharType="begin"/></w:r><w:r>{r}<w:instrText xml:space="preserve"> PAGEREF {name} </w:instrText></w:r>'
+            f'<w:r>{r}<w:fldChar w:fldCharType="separate"/></w:r><w:r>{r}<w:t>{cached}</w:t></w:r><w:r>{r}<w:fldChar w:fldCharType="end"/></w:r>')
+
+def page_cached(name):
+    if not PAGES: return '٠٠'
+    return str(PAGES[name]).translate(HINDI) if name in PAGES else '؟'
+
+def numbered_line(text, refs, ind='', bold=False):
+    """A line of the contents or of an index: the text, dot leaders, then its page numbers (fields), «٣، ١٢»."""
+    tabs = f'<w:tabs><w:tab w:val="right" w:leader="dot" w:pos="{TEXTW}"/></w:tabs>'
+    par = P(f'{text}\t', jc="right", after=40, ind=ind, bold=bold, extra=tabs)
+    sep = f'<w:r><w:rPr>{"<w:b/><w:bCs/>" if bold else ""}<w:rtl/></w:rPr><w:t xml:space="preserve">، </w:t></w:r>'
+    nums = sep.join(pageref(n, page_cached(n), bold) for n in refs) if refs else f'<w:r><w:rPr><w:rtl/></w:rPr><w:t>{"٠٠" if not PAGES else "؟"}</w:t></w:r>'
+    return par[:-len('</w:p>')] + nums + '</w:p>'
+
+def toc(entries=None):
     out = []
-    for t, pg, lvl in entries:
+    for t, lvl, k in TOC_ENTRIES:
         ind = '<w:ind w:left="567"/>' if lvl == 2 else ''   # the start side (see the note on hanging indents above)
-        tabs = f'<w:tabs><w:tab w:val="right" w:leader="dot" w:pos="{TEXTW}"/></w:tabs>'
-        out.append(P(f'{t}\t{pg}', jc="right", after=40, ind=ind, bold=(lvl==1), extra=tabs))
+        out.append(numbered_line(t, [f'_toc{k}'], ind=ind, bold=(lvl == 1)))
     return ''.join(out)
+
+def toc_head(par, text, lvl):
+    """A heading the contents list: it gets a bookmark the contents' page number refers to."""
+    k = len(TOC_ENTRIES) + 1
+    TOC_ENTRIES.append((re.sub(r'\*\*|\[\^[^\]]+\]', '', indexes.strip_marks(text)).strip(), lvl, k))
+    return with_bookmark(par, f'_toc{k}', 900000 + k)
 
 
 # ================= PARSER (markdown-ish input) =================
@@ -407,7 +439,7 @@ def parse(path):
         k = indexes.directive(s_)
         if k:   # an index: its own heading, on a new page, then its entries (set in build)
             brk = '<w:pageBreakBefore/>' if nhead in BREAK_BEFORE else ''; nhead += 1
-            B_.append(P(indexes.KINDS[k], 'Heading1', extra=brk)); B_.append(f'INDEX_PLACEHOLDER:{k}'); started = True; continue
+            B_.append(toc_head(P(indexes.KINDS[k], 'Heading1', extra=brk), indexes.KINDS[k], 1)); B_.append(f'INDEX_PLACEHOLDER:{k}'); started = True; continue
         if not s_.startswith(('# ', '>> ')): started = True; after_title = False
         if s_.strip() == '@toc':
             # with a cover the contents have a page of their own; an article's contents follow its title on page 1
@@ -419,15 +451,15 @@ def parse(path):
             brk = '<w:pageBreakBefore/>' if nhead in BREAK_BEFORE else ''; nhead += 1
         if s_.startswith(('### ', '## ')):
             if s_.startswith('### '): B_.append(P(inline(s_[4:], fnmap), 'RunHead', extra=brk))
-            else: B_.append(P(inline(s_[3:], fnmap), 'Heading2', extra=brk))
+            else: B_.append(toc_head(P(inline(s_[3:], fnmap), 'Heading2', extra=brk), s_[3:], 2))
             continue
         if s_.startswith('# '):
             if not started and not META.get('title'):
                 byline = len(nonblank) > 1 and nonblank[1].startswith('>> ')
                 B_.append(P(inline(s_[2:], fnmap), 'Heading1', before=topgap, after=LINE if byline else 3 * LINE,
                            extra='' if topgap == 4 * LINE else '<w:pageBreakBefore w:val="0"/>')); after_title = byline
-            elif META.get('title') or after_toc: B_.append(H1(inline(s_[2:], fnmap)))
-            else: B_.append(P(inline(s_[2:], fnmap), 'Heading1', before=3 * LINE // 2, extra=brk or '<w:pageBreakBefore w:val="0"/>'))
+            elif META.get('title') or after_toc: B_.append(toc_head(H1(inline(s_[2:], fnmap)), s_[2:], 1))
+            else: B_.append(toc_head(P(inline(s_[2:], fnmap), 'Heading1', before=3 * LINE // 2, extra=brk or '<w:pageBreakBefore w:val="0"/>'), s_[2:], 1))
             started = True; after_toc = False; continue
         if s_.startswith('-- '): B_.append(bullet(inline(s_[3:], fnmap), lvl=1)); continue
         if s_.startswith('* '): B_.append(bullet(inline(s_[2:], fnmap), lvl=0, bold=True)); continue
@@ -465,14 +497,17 @@ def ltr_text(raw):
 # ================= INDEXES =================
 HINDI = str.maketrans('0123456789', '٠١٢٣٤٥٦٧٨٩')
 def pages_of(es):
-    """The pages of a merged entry, «٣، ١٢»; ٠٠ before the first layout, ؟ for an entry whose page was not found."""
-    ps = sorted({PAGES.get(f'_fn{e["note"]}' if e['note'] else f'_ix{e["id"]}') for e in es} - {None})
-    if not PAGES: return '٠٠'
-    return '، '.join(str(p) for p in ps).translate(HINDI) if ps else '؟'
+    """The bookmarks of a merged entry, one for each page it is on (in the PDF), in page order. Before the first layout
+    every place counts once."""
+    names = [f'_fn{e["note"]}' if e['note'] else f'_ix{e["id"]}' for e in es]
+    if not PAGES: return list(dict.fromkeys(names))
+    first = {}
+    for n in names:
+        if n in PAGES: first.setdefault(PAGES[n], n)
+    return [first[p] for p in sorted(first)]
 
-def entry_line(text, pages, ind=''):
-    tabs = f'<w:tabs><w:tab w:val="right" w:leader="dot" w:pos="{TEXTW}"/></w:tabs>'
-    return P(f'{text}\t{pages}', jc="right", after=40, ind=ind, extra=tabs)
+def entry_line(text, refs, ind=''):
+    return numbered_line(text, refs, ind)
 
 def group_head(t):
     return P(t, jc='center', bold=True, before=200, after=80, extra='<w:keepNext/>')
@@ -608,7 +643,7 @@ def build(toc_entries, out):
     ftr2 = ftr1 if HEADER and not META.get('title') else None
 
     settings = f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:settings {W_NS}>
-{'<w:embedTrueTypeFonts/>' if QURAN_USED else ''}<w:defaultTabStop w:val="720"/><w:characterSpacingControl w:val="doNotCompress"/>
+{'<w:embedTrueTypeFonts/>' if QURAN_USED else ''}{'<w:updateFields w:val="true"/>' if any(b == 'TOC_PLACEHOLDER' or b.startswith('INDEX_PLACEHOLDER:') for b in B) else ''}<w:defaultTabStop w:val="720"/><w:characterSpacingControl w:val="doNotCompress"/>
 <w:footnotePr><w:numFmt w:val="decimal"/><w:numRestart w:val="eachPage"/><w:footnote w:id="-1"/><w:footnote w:id="0"/></w:footnotePr>
 <w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat>
 <w:themeFontLang w:val="en-US" w:bidi="ar-SA"/></w:settings>'''
@@ -699,3 +734,6 @@ if __name__ == '__main__':
         if CITE_STYLE:
             for line in cite.report({k: v for k, v in CITES.items() if k in CITED}, CITE_STYLE): print(line)
         if BASMALA and not BASMALA_USED: print('BASMALA: the text does not open with the basmala — nothing was set')
+        if PAGES and 'TOC_PLACEHOLDER' in B:
+            lost = [t for t, lvl, k in TOC_ENTRIES if f'_toc{k}' not in PAGES]
+            if lost: print('TOC: page not found for:', lost)
