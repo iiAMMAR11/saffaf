@@ -45,8 +45,9 @@ Every value below is the guide's; what it leaves to the department (citation sty
 | Approval page (model 3) | the same top lines and logo; the title; «إجازة الرسالة»; the committee in a table (name, role, signature) at about 21 cm |
 | Basmala page | one of Lotus Lotfi's seven basmalas, about 11 cm down |
 | Page numbers | title, approval and basmala pages: none; prelims: letters from «ب» (أبجد); text: 1, 2, 3 … from the introduction; a part's page («الباب …»): no header, no number |
-| Contents | «قائمة المحتويات», listing itself, the prelims with their letters, then the text, references, appendices and indexes |
+| Contents (model 5) | «قائمة المحتويات», listing itself: first the approval page (no page number), the prelims with their letters, then the text, references, appendices and indexes; the sub-headings of each chapter numbered «١-١، ١-٢» |
+| List of symbols (model 7) | each symbol and its meaning, two columns with no borders or shading, 16 pt; no page numbers |
 | Lists of tables and figures | «قائمة الجداول» / «قائمة الأشكال»: every caption «جدول (١-١): …» / «شكل (١-١): …» with its page |
 | Abstracts and acknowledgements | Arabic abstract and acknowledgements 14 pt, the abstract single-spaced; the English abstract left to right in Times; an abstract over 300 words or acknowledgements over a page are reported |
-| References | a 1 cm hanging indent; Latin references left to right |
+| References (p. 7) | two parts, «المراجع العربية» (Traditional Arabic 16) then «المراجع الأجنبية» (Times New Roman 14, left to right); a 1 cm hanging indent |
 | Appendices | after the references; before each one a page «ملحق رقم (n)» with its title; the indexes after the appendices |

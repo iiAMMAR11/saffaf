@@ -814,6 +814,25 @@ ok('thesis PDF: the contents give the prelims their letters (as their footers) a
    and toc_num('قائمة المحتويات') == tp[toc_p][1], str(tocl[:5]))
 tl = find_page('قائمة الجداول')
 ok('thesis PDF: the list of tables names each caption with its page', 0 < tl < intro and len([l_ for l_ in tp[tl][2].split('\n') if '....' in l_ and rev('جدول') in l_ and re.match(r'[0-9٠-٩]+\.', l_)]) == 2)
+def paras_of(x): return [''.join(re.findall(r'<w:t[^>]*>([^<]*)</w:t>', p_)) for p_ in re.findall(r'<w:p>.*?</w:p>', x)]
+tps = paras_of(tdoc); tocs = [p_ for p_ in tps if '\t' in p_]
+ok('thesis, model 5: the approval page heads the contents with no number; sub-headings numbered by chapter (١-١، ١-٢); the text counts from ١',
+   tocs[0] == 'نموذج إجازة الرسالة\t' and 'المقدمة\t١' in tocs and any(p_.startswith('١-١ المبحث الأول') for p_ in tocs)
+   and any(p_.startswith('١-٢ المبحث الثاني') for p_ in tocs) and not any(p_.startswith('١-') and 'الفصل' in p_ for p_ in tocs), str(tocs[:12]))
+ri = len(tps) - 1 - tps[::-1].index('المراجع')
+ok('thesis, p. 7: the references in two parts, the Arabic ones then the foreign ones, each reference as written',
+   tps[ri + 1] == 'المراجع العربية' and tps[ri + 5] == 'المراجع الأجنبية' and tps[ri + 6].startswith('Rosenthal') and tps[ri + 2].startswith('ابن كثير'), str(tps[ri:ri + 7]))
+sym = next(t_ for t_ in re.findall(r'<w:tbl>.*?</w:tbl>', tdoc) if 'توفي' in t_)
+ok('thesis, model 7: the list of symbols — each symbol and its meaning, no table lines, no shading, 16 pt', 'w:val="nil"' in sym and 'w:val="single"' not in sym and 'w:fill=' not in sym and '<w:sz w:val="32"/>' in sym)
+raw = run(os.path.join(SK, 'typeset.py'), os.path.join(thd, 'in.md'), os.path.join(OUT, 'thesis_raw.docx'), 'word', '--profile=kku', '--font=traditional', '--basmala=2', '--as-written=refs,symbols,toc-numbers')
+rdoc = zipfile.ZipFile(os.path.join(OUT, 'thesis_raw.docx')).read('word/document.xml').decode(); rps = paras_of(rdoc)
+ok('thesis: on request (--as-written) one list of references, the symbols as the author\'s table, no numbers in the contents',
+   raw.returncode == 0 and 'المراجع العربية' not in rps and not any(p_.startswith('١-١') for p_ in rps)
+   and 'w:val="single"' in next(t_ for t_ in re.findall(r'<w:tbl>.*?</w:tbl>', rdoc) if 'توفي' in t_), raw.stderr[-300:])
+ts.THESIS_NOTES.clear(); numbered = ['# المراجع', '١- الطبري، جامع البيان.', '٢- Rosenthal, The History.']
+ok('thesis: a numbered list of references keeps its order (renumbering would change the text), and the reply says so',
+   ts.split_refs(numbered) == numbered and any('مرقّمة' in n_ for n_ in ts.THESIS_NOTES))
+ts.THESIS_NOTES.clear()
 ts.CITES = srcs; ts.CITE_STYLE = 'ieee'; ts.CITED.clear(); ts.CITE_ORDER.clear()
 i1 = ts.expand_cites('{{مرجع|bukhari|١/ ٦}}'); i2 = ts.expand_cites('{{مرجع|aune|p. 40}}'); i3 = ts.expand_cites('{{مرجع|bukhari|٢/ ٣}}')
 ok('IEEE: numbered by first citation, the full reference the first time, the number after; the list in that order',

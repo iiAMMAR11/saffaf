@@ -128,12 +128,12 @@ def item(num, t, sep='-'):  # "١-" / "١." / "١)" hanging item, number as the 
 def fn(n, t): footnotes[n] = t
 
 # ---------- tables ----------
-def cell(t, w, head=False, jc='center', shade=None):
+def cell(t, w, head=False, jc='center', shade=None, size=28):
     sh = f'<w:shd w:val="clear" w:color="auto" w:fill="{shade}"/>' if shade else ''
-    para = P(t, 'TableText', jc=jc, bold=head, size=28)
+    para = P(t, 'TableText', jc=jc, bold=head, size=size)
     return f'<w:tc><w:tcPr><w:tcW w:w="{w}" w:type="dxa"/>{sh}<w:vAlign w:val="center"/></w:tcPr>{para}</w:tc>'
-def table(rows, widths, head_rows=1, first_col_head=False, body_jc='center'):
-    b = ''.join(f'<w:{s} w:val="single" w:sz="6" w:space="0" w:color="000000"/>' for s in ['top','left','bottom','right','insideH','insideV'])
+def table(rows, widths, head_rows=1, first_col_head=False, body_jc='center', plain=False):
+    b = ''.join((f'<w:{s} w:val="nil"/>' if plain else f'<w:{s} w:val="single" w:sz="6" w:space="0" w:color="000000"/>') for s in ['top','left','bottom','right','insideH','insideV'])
     grid = ''.join(f'<w:gridCol w:w="{w}"/>' for w in widths)
     out = [f'<w:tbl><w:tblPr><w:bidiVisual/><w:tblW w:w="{sum(widths)}" w:type="dxa"/><w:jc w:val="center"/><w:tblBorders>{b}</w:tblBorders><w:tblLayout w:type="fixed"/><w:tblCellMar><w:top w:w="40" w:type="dxa"/><w:left w:w="100" w:type="dxa"/><w:bottom w:w="40" w:type="dxa"/><w:right w:w="100" w:type="dxa"/></w:tblCellMar></w:tblPr><w:tblGrid>{grid}</w:tblGrid>']
     for i, r in enumerate(rows):
@@ -142,8 +142,8 @@ def table(rows, widths, head_rows=1, first_col_head=False, body_jc='center'):
         cells = ''
         for j, (t, w) in enumerate(zip(r, widths)):
             h = head or (first_col_head and j == 0)
-            jc = 'center' if (head or j < len(r)-1 or body_jc=='center') else body_jc
-            cells += cell(t, w, head=h, jc=jc, shade='D9D9D9' if head else ('F2F2F2' if (first_col_head and j==0) else None))
+            jc = 'both' if plain else 'center' if (head or j < len(r)-1 or body_jc=='center') else body_jc
+            cells += cell(t, w, head=h, jc=jc, size=32 if plain else 28, shade=None if plain else 'D9D9D9' if head else ('F2F2F2' if (first_col_head and j==0) else None))
         out.append(f'<w:tr>{trpr}{cells}</w:tr>')
     out.append('</w:tbl>')
     return ''.join(out)
@@ -167,6 +167,8 @@ def page_cached(name):
     if not PAGES: return '٠٠'
     if name.startswith('_pre') and name in PAGES and '_sec1' in PAGES:   # a prelims page: its letter (the first one is ب)
         return abjad(PAGES[name] - PAGES['_sec1'] + 2)
+    if PROFILE == 'kku' and name in PAGES and '_sec2' in PAGES and PAGES[name] >= PAGES['_sec2']:   # the text counts from 1
+        return str(PAGES[name] - PAGES['_sec2'] + 1).translate(HINDI)
     return str(PAGES[name]).translate(HINDI) if name in PAGES else '؟'
 
 def numbered_line(text, refs, ind='', bold=False):
@@ -177,9 +179,27 @@ def numbered_line(text, refs, ind='', bold=False):
     nums = sep.join(pageref(n, page_cached(n), bold) for n in refs) if refs else f'<w:r><w:rPr><w:rtl/></w:rPr><w:t>{"٠٠" if not PAGES else "؟"}</w:t></w:r>'
     return par[:-len('</w:p>')] + nums + '</w:p>'
 
+def toc_numbers():
+    """The guide's numbers before the sub-headings in the contents (model 5): «١-٢» is the second sub-heading of the
+    first chapter. The chapters are the headings «الفصل …» (or, with none, the text's level-1 headings other than the
+    introduction, the conclusion, the references, the appendices and the indexes); chapters count on across the parts."""
+    def bare(t): return indexes.bare(t).strip()
+    text = [(k, bare(t)) for k, (t, l, n) in enumerate(TOC_ENTRIES) if l == 1 and n.startswith('_toc')]
+    ch = {k for k, t in text if t.startswith('الفصل')} or {
+        k for k, t in text if not re.match(r'(ال)?(باب|مقدم|تمهيد|خاتم|ملاحق|فهرس|قائمة)', t) and not REFS.search(t)}
+    out = {}; c = s = 0; inside = False
+    for k, (t, l, n) in enumerate(TOC_ENTRIES):
+        if l == 1: inside = k in ch; c += inside; s = 0
+        elif inside and not re.match(r'[٠-٩0-9]', bare(t)): s += 1; out[k] = f'{c}-{s}'.translate(HINDI)
+    return out
+
 def toc(entries=None):
     out = []
-    for t, lvl, name in TOC_ENTRIES:
+    if PROFILE == 'kku' and APPROVAL:   # model 5: the approval page heads the contents, with no page number
+        out.append(P('نموذج إجازة الرسالة\t', jc='right', after=40, bold=True, extra=f'<w:tabs><w:tab w:val="right" w:leader="dot" w:pos="{TEXTW}"/></w:tabs>'))
+    nums = toc_numbers() if PROFILE == 'kku' and 'toc-numbers' not in AS_WRITTEN else {}
+    for k, (t, lvl, name) in enumerate(TOC_ENTRIES):
+        if k in nums: t = f'{nums[k]} {t}'
         ind = '<w:ind w:left="567"/>' if lvl == 2 else ''   # the start side (see the note on hanging indents above)
         # a Latin title (Abstract) keeps the Latin font in its line, as under its heading
         t = '`'.join(x if k % 2 else LATIN.sub(lambda m: '`\u202a' + m.group(0) + '\u202c`', x) for k, x in enumerate(t.split('`')))
@@ -352,6 +372,11 @@ def basmala_par():
 PROFILE = 'paper'
 SECT = 'front'          # the section being written: front (title, approval, basmala), prelims, text
 THESIS_NOTES = []       # in Arabic, for the reply
+# The guide decides everything in a thesis; what the user asks to keep as written instead (--as-written=…):
+# refs (one list of references, not two parts), symbols (the list of symbols as the author's table), toc-numbers
+# (no numbers before the sub-headings in the contents)
+AS_WRITTEN = set()
+APPROVAL = False        # the approval page is there: the contents list it first, with no page number
 CAPS = []               # captions of tables and figures: (kind, text, number)
 LOGO = None             # (bytes, extension, width EMU, height EMU)
 ABJAD = ['أ', 'ب', 'ج', 'د', 'هـ', 'و', 'ز', 'ح', 'ط', 'ي', 'ك', 'ل', 'م', 'ن', 'س', 'ع', 'ف', 'ص', 'ق', 'ر', 'ش', 'ت', 'ث', 'خ', 'ذ', 'ض', 'ظ', 'غ']
@@ -362,7 +387,7 @@ PRELIM = {title_key(x): k for x, k in (
     ('الإهداء', 'other'), ('إهداء', 'other'), ('الشكر والتقدير', 'ack'), ('شكر وتقدير', 'ack'), ('الشكر', 'ack'), ('شكر وعرفان', 'ack'),
     ('المستخلص', 'abs_ar'), ('مستخلص الرسالة', 'abs_ar'), ('ملخص الرسالة', 'abs_ar'), ('الملخص', 'abs_ar'), ('المستخلص باللغة العربية', 'abs_ar'),
     ('مستخلص الرسالة باللغة العربية', 'abs_ar'), ('Abstract', 'abs_en'), ('المستخلص باللغة الإنجليزية', 'abs_en'), ('مستخلص الرسالة باللغة الإنجليزية', 'abs_en'),
-    ('قائمة الرموز والمصطلحات', 'other'), ('قائمة الرموز', 'other'), ('قائمة المصطلحات', 'other'))}
+    ('قائمة الرموز والمصطلحات', 'symbols'), ('قائمة الرموز', 'symbols'), ('قائمة المصطلحات', 'symbols'))}
 REFS = re.compile(r'المراجع|المصادر|References|Bibliography')
 CAPTION = re.compile(r'^(?:>>\s*)?(?:\*\*)?\s*(جدول|الجدول|شكل|الشكل)\s*(?:رقم)?\s*\(?\s*[٠-٩0-9]+(?:\s*[-–.]\s*[٠-٩0-9]+)?\s*\)?\s*[:：\-–]')
 EMU = 360000   # per cm
@@ -436,6 +461,8 @@ def thesis_front(body):
     out.append(frame_lines([m['supervisor']] if m.get('supervisor') else [], 21, 40))
     out.append(frame_lines([m['date']] if m.get('date') else [], 26, 28))
     if any(l.strip() == '@approval' for l in body):
+        global APPROVAL
+        APPROVAL = True
         out.append(PAGEBREAK)
         head2 = ['جامعة الملك خالد'] + [x for x in (fixed('college', 'كلية'), fixed('department', 'قسم'),
                                                        f'التخصص: {m["field"]}' if m.get('field') else '', f'الدرجة العلمية: {m["degree"]}' if m.get('degree') else '') if x]
@@ -478,6 +505,26 @@ def separator(lines, sizes):
              extra='' if k == 0 else '<w:keepNext/>') for k, (t, sz) in enumerate(zip(lines, sizes))]
     return out
 
+REF_PART = re.compile(r'^(?:#+\s*)?(?:\*\*)?\s*(?:(?:أولًا|أولا|ثانيًا|ثانيا)\s*[:：\-–]?\s*)?(?:المراجع|المصادر)\s+(?:العربية|الأجنبية|الإنجليزية)')
+def split_refs(body):
+    """The guide (p. 7): the references in two parts, the Arabic ones (Traditional Arabic 16), then the foreign ones
+    (Times New Roman 14), each under the guide's own heading. Every reference keeps its words and its order within its
+    part. Left as written when the author made the parts already, or numbered the list (renumbering changes the text)."""
+    out = []; i = 0
+    while i < len(body):
+        l = body[i]; out.append(l); i += 1
+        if not (l.startswith('# ') and REFS.search(indexes.bare(l[2:])) and not PRELIM.get(title_key(l[2:]))): continue
+        j = i
+        while j < len(body) and not body[j].startswith('# ') and not body[j].strip().startswith('@'): j += 1
+        lines = [x for x in body[i:j] if x.strip()]
+        foreign = [len(re.findall(r'[A-Za-z]', x)) > len(AR.findall(x)) for x in lines]
+        if not any(foreign) or all(foreign) or any(x.startswith(('#', '|', '>>')) or REF_PART.match(x.strip()) for x in lines): continue
+        if any(re.match(r'^[٠-٩0-9]+\s*[-–.)]', x.strip()) for x in lines):
+            THESIS_NOTES.append('THESIS: قائمة المراجع مرقّمة، فتركتُ ترتيبها كما كتبتَه؛ والدليل يقسمها قسمين: المراجع العربية ثم الأجنبية'); continue
+        out += ['@refpart المراجع العربية'] + [x for x, f in zip(lines, foreign) if not f] + ['@refpart المراجع الأجنبية'] + [x for x, f in zip(lines, foreign) if f]
+        i = j
+    return out
+
 def parse(path):
     global HEADER, CUR_NOTE, SECT
     lines = open(path, encoding='utf-8').read().split('\n')
@@ -509,6 +556,7 @@ def parse(path):
         HEADER = META.get('title') or (first[2:] if first.startswith('# ') else None)
         if not HEADER: raise SystemExit('@header: the work has no title to put in the header; give the header text after @header')
     if HEADER: HEADER = re.sub(r'\*\*|\[\^[^\]]+\]', '', indexes.strip_marks(HEADER)).strip()
+    if PROFILE == 'kku' and 'refs' not in AS_WRITTEN: body = split_refs(body)
     if PROFILE == 'kku':
         global LOGO
         if META.get('logo'):
@@ -551,6 +599,10 @@ def parse(path):
                     for j in short: widths[j] = mins[j]
                     for j in rest: widths[j] -= extra // len(rest)
             widths[-1] += TEXTW - sum(widths)
+        if PROFILE == 'kku' and kind == 'symbols' and 'symbols' not in AS_WRITTEN:   # model 7: each symbol and its meaning, no table lines
+            w0 = max(need(0), 900) if n > 1 else TEXTW
+            B_.append(table([[inline(c, fnmap) for c in r] for r in rows], [w0] + [(TEXTW - w0) // (n - 1)] * (n - 1) if n > 1 else [TEXTW], plain=True))
+            B_.append(P('', after=0)); tbl.clear(); return
         B_.append(table([[inline(c, fnmap) for c in r] for r in rows], widths, body_jc='both' if last_long else 'center'))
         B_.append(P('', after=0)); tbl.clear()
     # An article with no cover opens with its title: the first block, if it is a level-1 heading, sits ~4 lines down
@@ -630,6 +682,8 @@ def parse(path):
             B_.append(H1('فهرس الموضوعات') if META.get('title') or toc_late else P('فهرس الموضوعات', 'Heading1', before=3 * LINE // 2, extra='<w:pageBreakBefore w:val="0"/>'))
             B_.append('TOC_PLACEHOLDER'); after_toc = True; continue
         if s_.strip() == '@pagebreak': B_.append('<w:p><w:r><w:br w:type="page"/></w:r></w:p>'); continue
+        if s_.startswith('@refpart '):   # a part of the references (the guide's heading; not in the contents, as in model 5)
+            B_.append(P(s_[len('@refpart '):], bold=True, size=36, before=240, after=120, extra='<w:keepNext/>')); continue
         if s_.startswith(('### ', '## ', '# ')):
             # make.py may ask for a page break before a heading that the PDF engine left alone at the foot of a page
             brk = '<w:pageBreakBefore/>' if nhead in BREAK_BEFORE else ''; nhead += 1
@@ -780,8 +834,8 @@ def section(kind):
 
 def join_sections(parts):
     """The body with its sections: each SECT marker closes the section before it (its settings go into the last
-    paragraph of that section) and opens the next; the prelims' first paragraph carries a bookmark for its page."""
-    out = []; cur = 'front'; mark = None
+    paragraph of that section) and opens the next; the first paragraphs of the prelims and of the text carry a bookmark for their pages."""
+    out = []; cur = 'front'; mark = None; seen_text = False
     for b in parts:
         if b.startswith('SECT:'):
             k = len(out) - 1
@@ -793,9 +847,10 @@ def join_sections(parts):
             i = tail.index('</w:pPr>'); last = last[:j] + tail[:i] + section(cur) + tail[i:]
             if k >= 0: out[k] = last
             else: out.insert(0, last)
-            cur = b[5:]; mark = '_sec1' if cur == 'prelims' else None
+            mark = '_sec1' if b[5:] == 'prelims' else '_sec2' if b[5:] == 'text' and not seen_text else None
+            seen_text = seen_text or b[5:] == 'text'; cur = b[5:]
             continue
-        if mark and b.startswith('<w:p>'): b = with_bookmark(b, mark, 799999) if '<w:pPr>' in b else b; mark = None
+        if mark and b.startswith('<w:p>'): b = with_bookmark(b, mark, 799999 if mark == '_sec1' else 799998) if '<w:pPr>' in b else b; mark = None
         out.append(b)
     return ''.join(out), section(cur)
 
@@ -965,6 +1020,8 @@ if __name__ == '__main__':
     BREAK_BEFORE = {int(x) for x in (opt('break-before') or '').split(',') if x}
     PROFILE = opt('profile') or 'paper'
     if PROFILE not in ('paper', 'kku'): raise SystemExit('--profile: paper | kku')
+    AS_WRITTEN = {x for x in (opt('as-written') or '').split(',') if x}
+    if AS_WRITTEN - {'refs', 'symbols', 'toc-numbers'}: raise SystemExit('--as-written: refs, symbols, toc-numbers')
     if PROFILE == 'kku':   # the guide: Traditional Arabic, 3.5 cm on the right
         MARGIN_RIGHT = 1984; TEXTW = 11906 - 1984 - 1417
     use_font('traditional' if PROFILE == 'kku' else (opt('font') or 'lotus'))

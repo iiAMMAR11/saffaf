@@ -14,7 +14,7 @@ The skill lives in `skill/saffaf/` (SKILL.md + scripts + fonts). Everything else
 - Never "fix" the author's «..» (two dots) or spelling; language remarks go in the chat reply, never in the file.
 - Never invent metadata (author, date, sources).
 - Scope: research papers, articles, and theses (رسائل الماجستير والدكتوراه; owner's decision 2026/10/19). Do not add or advertise books.
-- Theses follow the King Khalid University guide («دليل كتابة الرسائل العلمية وإخراجها»، الإصدار الثاني ١٤٤٣هـ) in their own profile (`--profile=kku`); the guide outranks the owner's and our earlier choices for that profile (owner, 2026/10/19). Its reading and every point where it differs from the paper style: `docs/kku-guide-review.md`. Papers and articles keep the printed-book style.
+- Theses follow the King Khalid University guide («دليل كتابة الرسائل العلمية وإخراجها»، الإصدار الثاني ١٤٤٣هـ) in their own profile (`--profile=kku`); the guide outranks the owner's and our earlier choices for that profile (owner, 2026/10/19). In a thesis everything follows the guide by default, and whatever the user explicitly asks for instead is done (owner, 2026/10/19: «اتبع الدليل في كل شي مع توفير خيار التعديل في حال الطلب»). Its reading and every point where it differs from the paper style: `docs/kku-guide-review.md`. Papers and articles keep the printed-book style.
 - Input: text only (pasted text, DOCX, DOC, ODT, RTF, HTML, EPUB, TXT, MD). PDF and images are refused; text copied from a PDF is detected (`DAMAGED`) and refused.
 - The skill is public: no personal names, paths or environment-specific details in skill files.
 - Lotus Lotfi is free and published by its author for use and redistribution; bundling it is fine.
