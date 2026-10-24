@@ -8,18 +8,25 @@ Every option is on request only — the user chose it:
   --basmala=N            the opening basmala set as Lotus Lotfi's basmala number N (1-7)
   --cite=STYLE --sources=FILE   citations in chicago | apa | harvard | mla | ieee, from the sources file (see cite.py)
   --profile=kku          a thesis set by the King Khalid University guide (Traditional Arabic, its pages and measures)"""
-import os, sys, re, json, shutil, subprocess, tempfile, zipfile, unicodedata
+import os, sys, re, json, shutil, signal, subprocess, tempfile, zipfile, unicodedata
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import indexes
 # claude.ai ships a sandbox-safe LibreOffice wrapper with its docx skill; elsewhere call soffice directly
 SOFFICE = '/mnt/skills/public/docx/scripts/office/soffice.py'
 SOFFICE_CMD = ['python3', SOFFICE] if os.path.exists(SOFFICE) else [shutil.which('soffice') or shutil.which('libreoffice') or 'soffice']
-PROFILE = '/tmp/ar_typeset_lo'
+# LibreOffice's profile: one per run when several documents are set at once (the web service gives each job its own)
+PROFILE = os.environ.get('SAFFAF_LO_PROFILE') or '/tmp/ar_typeset_lo'
 
 def setup():
     # Linux: fontconfig reads ~/.fonts. Elsewhere (macOS): headless LibreOffice ignores the system font
     # folders and only sees its bundled fonts plus <profile>/user/fonts, so the fonts go there.
+    # SAFFAF_FONTS_INSTALLED: the server installed the same files (unmodified) system-wide once, so they are not copied
+    # and fontconfig's cache is not rebuilt on every run; only LibreOffice's settings below are written.
+    if not os.environ.get('SAFFAF_FONTS_INSTALLED'): install_fonts()
+    lo_settings()
+
+def install_fonts():
     fd = os.path.expanduser('~/.fonts') if sys.platform.startswith('linux') else PROFILE + '/user/fonts'
     os.makedirs(fd, exist_ok=True)
     for f in os.listdir(os.path.join(HERE, '..', 'assets', 'fonts')):
@@ -42,6 +49,8 @@ def setup():
     shutil.copy(os.path.join(HERE, '..', 'assets', 'symbols', 'NotoNaskhArabic-Regular.ttf'), fd)
     if UTHMANI: shutil.copy(os.path.join(HERE, '..', 'assets', 'quran', 'UthmanicHafs_V22.ttf'), fd)
     if shutil.which('fc-cache'): subprocess.run(['fc-cache', '-f'], capture_output=True)
+
+def lo_settings():
     os.makedirs(PROFILE + '/user', exist_ok=True)
     open(PROFILE + '/user/registrymodifications.xcu', 'w').write(
         '<?xml version="1.0" encoding="UTF-8"?><oor:items xmlns:oor="http://openoffice.org/2001/registry" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
@@ -52,10 +61,15 @@ def setup():
 
 def lo(args, limit=600):
     """Run LibreOffice. A conversion takes seconds; one that runs on past the limit is a LibreOffice loop: it is stopped
-    and False returned (after the full ten minutes the build stops with a message rather than wait for ever)."""
-    try: subprocess.run(SOFFICE_CMD + [f'-env:UserInstallation=file://{PROFILE}', '--headless'] + args, capture_output=True, timeout=limit)
+    and False returned (after the full ten minutes the build stops with a message rather than wait for ever).
+    Only this call's own processes are stopped (its process group), never another document's LibreOffice."""
+    p = subprocess.Popen(SOFFICE_CMD + [f'-env:UserInstallation=file://{PROFILE}', '--headless'] + args,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    try: p.wait(timeout=limit)
     except subprocess.TimeoutExpired:
-        subprocess.run(['pkill', '-9', '-x', 'soffice.bin'], capture_output=True)
+        try: os.killpg(p.pid, signal.SIGKILL)
+        except ProcessLookupError: pass
+        p.wait()
         if limit >= 600: sys.exit('LibreOffice did not finish converting ' + os.path.basename(args[-1]) + ' (stopped after 10 minutes)')
         return False
     return True
@@ -303,7 +317,7 @@ def lo_pdf(ts, md, docx, pdf, args):
     a page gets a page break before it, in the Word file, which is then built and exported again. -> typeset's report."""
     heads = keep_heads(md)
     for _ in range(6):
-        r = subprocess.run(['python3', ts, md, docx, 'word'] + args + ([f'--break-before={",".join(map(str, BREAKS))}'] if BREAKS else []), capture_output=True, text=True)
+        r = subprocess.run([sys.executable, ts, md, docx, 'word'] + args + ([f'--break-before={",".join(map(str, BREAKS))}'] if BREAKS else []), capture_output=True, text=True)
         if r.returncode: sys.exit(r.stderr.strip().splitlines()[-1] if r.stderr.strip() else 'typeset.py failed')
         to_pdf(docx, pdf)
         new = [n for n in lone_heads(pdf, heads) if n not in BREAKS]

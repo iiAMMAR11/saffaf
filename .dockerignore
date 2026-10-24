@@ -1,0 +1,5 @@
+.git
+dist
+trial
+**/__pycache__
+tests/quran-source

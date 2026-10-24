@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>صفّاف — صفٌّ احترافي لأبحاثك ومقالاتك</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2324524a'/%3E%3Cpath d='M7 9h18M7 14h18M7 19h12M7 24h18' stroke='%23fbfaf7' stroke-width='2' stroke-linecap='round' fill='none'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="wrap top-inner">
+    <a class="brand" href="/" aria-label="صفّاف">
+      <span class="mark" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M7 9h18M7 14h18M7 19h12M7 24h18"/></svg></span>
+      <img class="wordmark" src="/static/wordmark.png" alt="صفّاف" width="152" height="58">
+    </a>
+    <span class="badge">نسخة تجريبية</span>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="hero" id="hero">
+    <h1>صفٌّ احترافي لأبحاثك ومقالاتك</h1>
+    <ul class="features">
+      <li><svg viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-8 9-8 9s-8-4-8-9V6zM8 12l3 3 5-6"/></svg>لا يغيّر حرفًا من نصّك</li>
+      <li><svg viewBox="0 0 24 24"><path d="M12 5v16M12 5C9 3 5 3 3 4v15c3-1 6-1 9 2M12 5c3-2 7-2 9-1v15c-3-1-6-1-9 2"/></svg>الآيات بالرسم العثماني</li>
+      <li><svg viewBox="0 0 24 24"><path d="M14 3H5v18h14V8zM14 3v5h5M8 13h8M8 17h5"/></svg>ملفّا Word وPDF</li>
+    </ul>
+  </section>
+
+  <ol class="steps" id="steps" aria-label="المراحل">
+    <li data-step="send"><span>١</span>أرسل نصّك</li>
+    <li data-step="review"><span>٢</span>راجع البنية</li>
+    <li data-step="options"><span>٣</span>الإعدادات</li>
+    <li data-step="result"><span>٤</span>الملفات</li>
+  </ol>
+
+  <!-- 1. send -->
+  <section class="card" id="v-send">
+    <div class="seg" role="tablist">
+      <button role="tab" class="on" data-tab="file">ارفع ملفًّا</button>
+      <button role="tab" data-tab="text">الصق نصّك</button>
+    </div>
+    <div data-pane="file">
+      <label class="drop" id="drop">
+        <input type="file" id="file" accept=".docx,.docm,.dotx,.doc,.odt,.rtf,.html,.htm,.xhtml,.epub,.txt,.md,.wpd,.fodt">
+        <svg viewBox="0 0 24 24"><path d="M14 3H5v18h14V8zM14 3v5h5M12 11v6M9 14l3-3 3 3"/></svg>
+        <strong id="drop-title">اختر ملف بحثك أو اسحبه إلى هنا</strong>
+        <span class="muted" dir="ltr">DOCX · DOC · ODT · RTF · HTML · EPUB · TXT · MD</span>
+      </label>
+    </div>
+    <div data-pane="text" hidden>
+      <textarea id="text" rows="12" placeholder="الصق نص بحثك أو مقالتك هنا…"></textarea>
+    </div>
+    <p class="note">لا أقبل ملفات PDF ولا الصور؛ لأن النص المستخرج منها تتلف حروفه، ولا أخمّن حروف الكاتب. أرسل الأصل: ملف Word أو النص نفسه.</p>
+    <div class="actions">
+      <button class="btn primary" id="send">تابع</button>
+    </div>
+    <p class="privacy">تبقى ملفاتك ساعةً ثم تُحذف، ولك أن تحذفها قبل ذلك.</p>
+  </section>
+
+  <!-- 2. review -->
+  <section class="card" id="v-review" hidden>
+    <h2>راجع بنية النص</h2>
+    <p class="lead">حدّدتُ عناوين نصك وحواشيه وجداوله. صحّح ما تراه في القائمة ثم تابع؛ لا يتغيّر بهذا حرفٌ من نصك، وإنما يتغيّر موضع السطر وشكله.</p>
+    <div class="chips" id="summary"></div>
+    <div class="alerts" id="review-alerts"></div>
+    <div class="seg small" id="filter">
+      <button class="on" data-f="main">العناوين والمقترحات</button>
+      <button data-f="all">كل الأسطر</button>
+    </div>
+    <ol class="lines" id="lines"></ol>
+    <div class="actions">
+      <button class="btn primary" id="to-options">تابع إلى الإعدادات</button>
+      <button class="btn ghost" data-back="send">رجوع</button>
+    </div>
+  </section>
+
+  <!-- 3. options -->
+  <section class="card" id="v-options" hidden>
+    <h2>إعدادات الصفّ</h2>
+    <p class="lead" id="panel-line"></p>
+    <div class="alerts" id="options-alerts"></div>
+
+    <fieldset class="opt">
+      <legend>النوع</legend>
+      <div class="seg wide" id="kind">
+        <button data-v="article">مقال</button>
+        <button data-v="paper">بحث بغلاف</button>
+        <button data-v="thesis">رسالة علمية</button>
+      </div>
+      <p class="hint" id="kind-hint"></p>
+    </fieldset>
+
+    <fieldset class="opt" id="cover-box" hidden>
+      <legend>الغلاف</legend>
+      <p class="hint">من نصك أو مما تكتبه هنا؛ وما تتركه فارغًا لا يظهر، ولا أضع من عندي شيئًا.</p>
+      <div class="grid">
+        <label>عنوان البحث<input id="c-title" placeholder="يُؤخذ من أول سطر في نصك إن تركتَه"></label>
+        <label>المؤلف<input id="c-author"></label>
+        <label>الصفة<input id="c-affiliation" placeholder="مثل: أستاذ مشارك بقسم…"></label>
+        <label>التاريخ<input id="c-date" placeholder="١٤٤٧هـ – ٢٠٢٦م"></label>
+      </div>
+    </fieldset>
+
+    <fieldset class="opt" id="thesis-box" hidden>
+      <legend>بيانات الرسالة</legend>
+      <p class="hint">بدليل الرسائل العلمية في جامعة الملك خالد؛ والدليل هو الأصل في كل شيء، وما يخالفه تجده في «خيارات أخرى».</p>
+      <div class="grid">
+        <label>عنوان الرسالة<input id="t-title"></label>
+        <label>الكلية<input id="t-college" placeholder="بلا «كلية»"></label>
+        <label>القسم<input id="t-department" placeholder="بلا «قسم»"></label>
+        <label>الدرجة<select id="t-degree"><option value="">—</option><option>الماجستير</option><option>الدكتوراه</option></select></label>
+        <label>التخصص<input id="t-field"></label>
+        <label>اسم الطالب<input id="t-author"></label>
+        <label>المشرف ولقبه<input id="t-supervisor"></label>
+        <label>تاريخ المناقشة<input id="t-date"></label>
+      </div>
+      <label class="block">أعضاء لجنة المناقشة (كل عضو في سطر: الاسم | الصفة)
+        <textarea id="t-members" rows="3" placeholder="د. فلان | مشرف ومقرر"></textarea></label>
+      <label class="block">شعار الجامعة (PNG أو JPEG، اختياري)<input type="file" id="t-logo" accept=".png,.jpg,.jpeg"></label>
+      <label class="check"><input type="checkbox" id="t-approval"> صفحة إجازة الرسالة (النموذج ٣)</label>
+      <label class="check"><input type="checkbox" id="t-basmala"> صفحة البسملة</label>
+    </fieldset>
+
+    <fieldset class="opt">
+      <legend>فهرس الموضوعات</legend>
+      <div class="seg wide" id="toc">
+        <button data-v="front">في أوله</button>
+        <button data-v="end">في آخره</button>
+        <button data-v="none">بلا فهرس</button>
+      </div>
+    </fieldset>
+
+    <fieldset class="opt" id="verses-box" hidden>
+      <legend>الآيات <span class="count" id="verses-count"></span></legend>
+      <label class="check"><input type="checkbox" id="uthmani"> اكتب الآيات بالرسم العثماني (رواية حفص)</label>
+      <p class="hint">لا يُنظر إلا فيما علّمتَه آيةً: ما بين ﴿ ﴾، وما بين علامتي تنصيص بعد «قال تعالى» ونحوها. وما لم يطابق حروف المصحف يبقى كما كتبتَه وأنبّهك عليه.</p>
+      <label class="check"><input type="checkbox" id="verse-index"> فهرس الآيات القرآنية في آخر البحث</label>
+    </fieldset>
+
+    <fieldset class="opt muted-box">
+      <legend>الفهارس الأخرى ونظام الإحالة</legend>
+      <p class="hint">فهارس الأحاديث والآثار والأعلام والرواة والأنساب والغريب والشعر والأماكن والمصطلحات، وصفّ الإحالات بنظام Chicago أو APA أو Harvard أو MLA أو IEEE — تحتاج المساعد الذكي، وهو غير مفعّل في هذه النسخة التجريبية.</p>
+      <div class="chips" id="ai-chips"></div>
+    </fieldset>
+
+    <details class="opt more">
+      <summary>خيارات أخرى</summary>
+      <label class="check"><input type="checkbox" id="header"> الترويسة: عنوان البحث أعلى كل صفحة عدا الأولى</label>
+      <div id="font-box">
+        <p class="sub">خط المتن</p>
+        <div class="seg" id="font">
+          <button data-v="lotus" class="on">لوتس لطفي</button>
+          <button data-v="traditional">Traditional Arabic</button>
+        </div>
+      </div>
+      <div id="basmala-box" hidden>
+        <p class="sub">البسملة التي يبدأ بها النص</p>
+        <img class="basmalas" src="/basmala-shapes.png" alt="بسملات لوتس لطفي السبع مرقّمة">
+        <label class="inline">ارسمها بالبسملة رقم
+          <select id="basmala"><option value="0">— كما كتبتَها</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option></select></label>
+      </div>
+      <label class="check" id="symbols-box" hidden><input type="checkbox" id="symbols"> حوّل رموز الخط الرمزي (ﷺ وأخواتها) إلى محارفها؛ وما لا يُعرف معناه يبقى</label>
+      <label class="check" id="sort-box" hidden><input type="checkbox" id="sort"> رتّب قائمة المصادر هجائيًّا (كل سطر كما كتبتَه)</label>
+      <div id="aw-box" hidden>
+        <p class="sub">ما يخالف دليل الجامعة عند الطلب</p>
+        <label class="check"><input type="checkbox" value="refs" class="aw"> المراجع قائمة واحدة كما كتبتَها</label>
+        <label class="check"><input type="checkbox" value="symbols" class="aw"> قائمة الرموز جدولًا كما كتبتَها</label>
+        <label class="check"><input type="checkbox" value="toc-numbers" class="aw"> بلا ترقيم العناوين الفرعية في قائمة المحتويات</label>
+      </div>
+    </details>
+
+    <div class="actions">
+      <button class="btn primary" id="go">صُفَّ النص</button>
+      <button class="btn ghost" data-back="review">رجوع</button>
+    </div>
+  </section>
+
+  <!-- 4. result -->
+  <section class="card" id="v-result" hidden>
+    <div id="working">
+      <div class="spinner" aria-hidden="true"></div>
+      <h2>يجري الصفّ…</h2>
+      <p class="lead">يستغرق عادةً بين عشر ثوانٍ وثلاثين ثانية، والرسائل العلمية أطول. <span id="elapsed"></span></p>
+    </div>
+    <div id="failed" hidden>
+      <h2>لم يكتمل الصفّ</h2>
+      <div class="alert bad" id="fail-msg"></div>
+      <div class="actions"><button class="btn ghost" data-back="options">عُد إلى الإعدادات</button></div>
+    </div>
+    <div id="done" hidden>
+      <h2>ملفاتك جاهزة</h2>
+      <div class="downloads">
+        <a class="btn primary dl" id="dl-pdf"><svg viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>ملف PDF</a>
+        <a class="btn dl" id="dl-docx"><svg viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>ملف Word</a>
+        <a class="btn dl" id="dl-fonts"><svg viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>خطوط ملف Word</a>
+      </div>
+      <ul class="notes" id="always"></ul>
+      <div class="alerts" id="result-msgs"></div>
+      <h3 class="pages-h">معاينة الصفحات <span class="count" id="pages-count"></span></h3>
+      <div class="pages" id="pages"></div>
+      <details class="more"><summary>عن ملف Word</summary><ul class="notes" id="word-notes"></ul></details>
+      <div class="actions">
+        <button class="btn" id="again">صُفَّ نصًّا آخر</button>
+        <button class="btn ghost danger" id="delete">احذف ملفاتي الآن</button>
+      </div>
+    </div>
+  </section>
+
+  <div class="alert bad" id="refused" hidden></div>
+</main>
+
+<footer class="foot wrap">
+  <span>صفّاف · لا يغيّر حرفًا من نصّك</span>
+</footer>
+
+<dialog id="viewer"><img alt=""><button class="btn" id="close-viewer">إغلاق</button></dialog>
+<script src="/static/app.js"></script>
+</body>
+</html>

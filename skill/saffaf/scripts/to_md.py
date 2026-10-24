@@ -11,7 +11,7 @@ Prints a short report (format, footnotes found, warnings) to stdout.
 Word files that draw signs with a symbol font (AGA Arabesque and the like: the file stores «e» and the font draws ﷺ)
 are reported on a SYMBOLS line. Only with --symbols (the user asked for it) are the signs whose meaning is known
 written as their standard character; the others stay as they are and are named on the line."""
-import os, re, sys, shutil, subprocess, tempfile, zipfile, posixpath
+import os, re, sys, shutil, signal, subprocess, tempfile, zipfile, posixpath
 import xml.etree.ElementTree as ET
 
 W = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
@@ -39,8 +39,17 @@ def symbol_font(name):
 # ---------------- LibreOffice bridge ----------------
 def to_docx(path):
     d = tempfile.mkdtemp()
-    subprocess.run(SOFFICE_CMD + ['-env:UserInstallation=file:///tmp/ar_typeset_conv', '--headless',
-                    '--convert-to', 'docx:MS Word 2007 XML', '--outdir', d, path], capture_output=True)
+    # one LibreOffice profile per run when several documents are converted at once (SAFFAF_CONV_PROFILE); a conversion
+    # that hangs is stopped after 5 minutes — its own processes only (its process group)
+    prof = os.environ.get('SAFFAF_CONV_PROFILE') or '/tmp/ar_typeset_conv'
+    p = subprocess.Popen(SOFFICE_CMD + [f'-env:UserInstallation=file://{prof}', '--headless',
+                          '--convert-to', 'docx:MS Word 2007 XML', '--outdir', d, path],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    try: p.wait(timeout=300)
+    except subprocess.TimeoutExpired:
+        try: os.killpg(p.pid, signal.SIGKILL)
+        except ProcessLookupError: pass
+        p.wait()
     out = os.path.join(d, os.path.splitext(os.path.basename(path))[0] + '.docx')
     if not os.path.exists(out):
         sys.exit(f'LibreOffice could not convert {path}')
